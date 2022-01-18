@@ -1,0 +1,12 @@
+# ignore all & Unignore all with extensions
+# automatically binary executables without extensions
+*
+!*.*
+
+# zig temp files
+zig-cache
+zig-out
+
+# ignore all hidden
+.?*
+
