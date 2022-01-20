@@ -17,7 +17,6 @@ pub fn main () anyerror!void {
     defer arena.deinit();
 
     const allocator = arena.allocator();
-
     const tokens = try load_and_parse(allocator, "hello.bf");
     try compile_c(allocator, tokens, "main");
 }
@@ -98,22 +97,17 @@ fn compile_c (allocator: std.mem.Allocator, tokens: std.ArrayList(BFinstr), dest
     //        "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/root/bin",
     //});
 
-    const e = std.os.execveZ(
-        //"/usr/bin/gcc",
+    const ret = try system(
         "/usr/bin/gcc",
         &[_:null]?[*:0]const u8{
             "/usr/bin/gcc",
             "-o", dest_path,
             temp_path,
             null,
-        }, &[_:null]?[*:0]const u8{
-            "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/root/bin",
-            null,
-    });
+        }, &[_:null]?[*:0]const u8{null}
+    );
 
-    dprint("{s}\n", .{@errorName(e)});
-    std.debug.dumpStackTrace(@errorReturnTrace().?.*);
-    unreachable; // execve should not return on success
+    if (ret.status != 0) return error.GccError;
 }
 
 fn translate_c (instr: BFinstr) []const u8 {
@@ -145,6 +139,38 @@ fn tokenize (c: u8) ?BFinstr {
     };
 }
 
-test "basic test" {
-    try std.testing.expectEqual(10, 3 + 7);
+test "test ir=c" {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+
+    const allocator = arena.allocator();
+    const tokens = try load_and_parse(allocator, "hello.bf");
+    try compile_c(allocator, tokens, "main");
+
+    const ret = try system(
+        "/bin/bash",
+        &[_:null]?[*:0]const u8{
+            "/bin/bash", "-c", "diff <(./main) <(echo 'Hello World!')", null,
+        }, &[_:null]?[*:0]const u8{null}
+    );
+
+    // REPORT this is a bug in zig, you can't just use '0'
+    try std.testing.expectEqual(@as(u32, 0), ret.status);
+}
+
+fn test_system () !void {
+    const ret = try system("/bin/bash", &[_:null]?[*:0]u8{"/bin/bash", "-c", "sleep 5; date", null}, &[_:null]?[*:0]u8{null});
+    std.testing.expect(0, ret.status);
+}
+
+// like subshell execution by `cmd args..` in bash
+// run the command and waits for the result
+fn system (
+    file: [*:0]const u8,
+    argv_ptr: [*:null]const ?[*:0]const u8,
+    envp: [*:null]const ?[*:0]const u8,
+) (std.os.ExecveError || std.os.ForkError) ! std.os.WaitPidResult {
+    const pid = try std.os.fork();
+    return if (pid != 0) std.os.waitpid(pid, 0)
+           else std.os.execvpeZ(file, argv_ptr, envp);
 }
