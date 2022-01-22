@@ -20,6 +20,7 @@ const CompileOptions = struct {
     compile_using: union(enum) {
         gcc: struct {
             with_libc: bool,
+            inlined: bool = false,
         },
         as: struct {
             quick: bool,
@@ -94,17 +95,23 @@ fn compile_c (
             ;
 
     } else {
-        c_code_header =
+        c_code_header = if (! options.compile_using.gcc.inlined)
             \\#include <syscall.h>
             \\char buf[1000];
             \\int intputchar(char c);
             \\int intgetchar();
             \\int main(void) {
             \\  char *ptr = buf;
-            ;
+        else
+            \\#include <syscall.h>
+            \\char buf[1000];
+            \\int main(void) {
+            \\  int ret; // used to store return value of read syscall
+            \\  char *ptr = buf;
+        ;
 
         // https://gcc.gnu.org/onlinedocs/gcc/Using-Assembly-Language-with-C.html
-        c_code_footer = switch(options.target) {
+        c_code_footer = if (!options.compile_using.gcc.inlined) switch(options.target) {
             .linux_x86_64 =>
                 \\}
                 \\int intputchar(char c) {
@@ -151,7 +158,9 @@ fn compile_c (
                 \\}
                 ,
             else => unreachable,
-        };
+        } else
+            \\}
+        ;
     }
 
     const temp_path: [:0]u8 = try std.fmt.allocPrintZ(allocator, "{s}.c", .{dest_path});
@@ -209,16 +218,55 @@ fn translate_c (options: CompileOptions, instr: BFinstr) []const u8 {
         .Get   => // ,
             if (options.compile_using.gcc.with_libc)
                 "*ptr = getchar();"
-            else
+            else if (! options.compile_using.gcc.inlined)
                 "*ptr = intgetchar();"
-                  ,
+            else switch (options.target) {
+                .linux_x86_64 =>
+                    \\asm volatile (
+                    \\  "syscall"
+                    \\  : "=a"(ret)
+                    \\  : "a"(__NR_read), "D"(0), "S"(ptr), "d"(1)
+                    \\  : "memory"
+                    \\);
+                    \\if(ret != 1) *ptr = -1; // -1 == EOF
+                    ,
+                .linux_x86 =>
+                    \\asm volatile (
+                    \\  "int $0x80"
+                    \\  : "=a"(ret)
+                    \\  : "a"(__NR_read), "b"(0), "c"(ptr), "d"(1)
+                    \\  : "memory"
+                    \\);
+                    \\if(ret != 1) *ptr = -1; // -1 == EOF
+                    ,
+                else => unreachable,
+            },
         .Put   => // .
             if (options.compile_using.gcc.with_libc)
                 "putchar(*ptr);"
-            else
+            else if (! options.compile_using.gcc.inlined)
                 "intputchar(*ptr);"
-            ,
+            else switch (options.target) {
+                .linux_x86_64 =>
+                    \\asm volatile (
+                    \\  "syscall"
+                    \\  :
+                    \\  : "a"(__NR_write), "D"(1), "S"(ptr), "d"(1)
+                    \\  : "memory"
+                    \\);
+                    ,
+                .linux_x86 =>
+                    \\asm volatile (
+                    \\  "int $0x80"
+                    \\  :
+                    \\  : "a"(__NR_write), "b"(1), "c"(ptr), "d"(1)
+                    \\  : "memory"
+                    \\);
+                    ,
+                else => unreachable,
+            },
     };
+
 }
 
 fn tokenize (c: u8) ?BFinstr {
@@ -297,6 +345,35 @@ test "c_linux_86_64_rot13" {
         .target = .linux_x86_64,
         .compile_using = .{ .gcc = .{
             .with_libc = false,
+        }},
+    };
+    try compile_c(allocator, tokens, "main", options);
+
+    const input = "abcdefghijklmnopqrstuvwxyz";
+    const ret = try system(
+        "/bin/bash",
+        &[_:null]?[*:0]const u8{
+            "/bin/bash",
+            "-c", "[ \"`echo '" ++ input ++ "' | ./main | ./main`\" == '" ++ input ++  "' ]",
+            null,
+        }, &[_:null]?[*:0]const u8{null}
+    );
+
+    // REPORT this is a bug in zig, you can't just use '0'
+    try std.testing.expectEqual(@as(u32, 0), ret.status);
+}
+
+test "c_inline_linux_86_64_rot13" {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+
+    const allocator = arena.allocator();
+    const tokens = try load_and_parse(allocator, "samples/rot13.bf");
+    const options = CompileOptions {
+        .target = .linux_x86_64,
+        .compile_using = .{ .gcc = .{
+            .with_libc = false,
+            .inlined = true,
         }},
     };
     try compile_c(allocator, tokens, "main", options);
