@@ -12,17 +12,15 @@ const BFinstr = enum {
     Put,   // .
 };
 
-const GccOptions = struct {
-    with_libc: bool = false,
-};
-
 const CompileOptions = struct {
     target: enum {
         linux_x86, linux_x86_64, windows,
     },
 
     compile_using: union(enum) {
-        gcc: GccOptions,
+        gcc: struct {
+            with_libc: bool,
+        },
         as: struct {
             quick: bool,
         },
@@ -35,9 +33,14 @@ pub fn main () anyerror!void {
     defer arena.deinit();
 
     const allocator = arena.allocator();
-    const tokens = try load_and_parse(allocator, "hello.bf");
-    const options = CompileOptions { .target = .linux_x86, .compile_using = .{ .gcc = GccOptions { .with_libc = false, }, } };
-    try compile_c(allocator, options, tokens, "main");
+    const tokens = try load_and_parse(allocator, "samples/hello.bf");
+    const options = CompileOptions {
+        .target = .linux_x86,
+        .compile_using = .{ .gcc = .{
+            .with_libc = false,
+        }},
+    };
+    try compile_c(allocator, tokens, "main", options);
 }
 
 fn load_and_parse (allocator: std.mem.Allocator, src_path: [:0]const u8) !std.ArrayList(BFinstr) {
@@ -66,29 +69,31 @@ fn load_and_parse (allocator: std.mem.Allocator, src_path: [:0]const u8) !std.Ar
     return tokens;
 }
 
-fn compile_c (allocator: std.mem.Allocator, options: CompileOptions, tokens: std.ArrayList(BFinstr), dest_path: [:0]const u8) !void {
+fn compile_c (
+    allocator: std.mem.Allocator,
+    tokens: std.ArrayList(BFinstr),
+    dest_path: [:0]const u8,
+    options: CompileOptions,
+) !void {
     // REPORT zig does not let me use if as ternary expression <- with block body
     //const c_code = if (options.compile_using.gcc.with_libc) {
 
-    //var c_code_header: [:0]const u8 = undefined;
     var c_code_header: [:0]const u8 = undefined;
     var c_code_footer: [:0]const u8 = undefined;
 
     if (options.compile_using.gcc.with_libc) {
-        const c_code = .{ .header =
+        c_code_header =
             \\#include <stdio.h>
             \\char buf[1000];
             \\int main(void) {
             \\  char *ptr = buf;
+            ;
 
-        , .footer =
+        c_code_footer =
             \\}
-        };
-        c_code_header = c_code.header;
-        c_code_footer = c_code.footer;
+            ;
 
     } else {
-        // REPORT struct field initialization with switch does not work
         c_code_header =
             \\#include <syscall.h>
             \\char buf[1000];
@@ -98,6 +103,7 @@ fn compile_c (allocator: std.mem.Allocator, options: CompileOptions, tokens: std
             \\  char *ptr = buf;
             ;
 
+        // https://gcc.gnu.org/onlinedocs/gcc/Using-Assembly-Language-with-C.html
         c_code_footer = switch(options.target) {
             .linux_x86_64 =>
                 \\}
@@ -118,9 +124,10 @@ fn compile_c (allocator: std.mem.Allocator, options: CompileOptions, tokens: std
                 \\    : "a"(__NR_read), "D"(0), "S"(&c), "d"(1)
                 \\    : "memory"
                 \\  );
-                \\  return ret==1? c: -1;
+                \\  return ret==1? c: -1; // -1 == EOF
                 \\}
                 ,
+
             .linux_x86 =>
                 \\}
                 \\int intputchar(char c) {
@@ -140,16 +147,13 @@ fn compile_c (allocator: std.mem.Allocator, options: CompileOptions, tokens: std
                 \\    : "a"(__NR_read), "b"(0), "c"(&c), "d"(1)
                 \\    : "memory"
                 \\  );
-                \\  return ret==1? c: -1;
+                \\  return ret==1? c: -1; // -1 == EOF
                 \\}
                 ,
             else => unreachable,
         };
     }
 
-    // zig documentation page is still in experimental phase.
-    // could find handy this function from the source.
-    // go for the source rather than documentation, at least for now.
     const temp_path: [:0]u8 = try std.fmt.allocPrintZ(allocator, "{s}.c", .{dest_path});
     defer allocator.free(temp_path);
 
@@ -167,23 +171,6 @@ fn compile_c (allocator: std.mem.Allocator, options: CompileOptions, tokens: std
 
         try file.writeAll(c_code_footer);
     }
-
-    //compiler killer!
-    //const x: [3:null] ?[*:0]const u8  = [_:null]?[*:0]u8{"hello.c", "-o", "hello"};
-
-    //Fault, no null added <- checked by strace
-    //const e = std.os.execveZ(
-    //    //"/usr/bin/gcc",
-    //    "./dump_argv",
-    //    &[_:null]?[*:0]const u8{
-    //        "/usr/bin/gcc",
-    //        //"-o", dest_path,
-    //        "-o", "main",
-    //        temp_path,
-    //        //"main.c",
-    //    }, &[_:null]?[*:0]const u8{
-    //        "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/root/bin",
-    //});
 
     // REPORT execvpe does not hand over PATH var to the subproc if the path is absolute
     // furthermore, it is not get exported to child env (PATH only used to find the executable,
@@ -255,9 +242,14 @@ test "c_hello" {
     defer arena.deinit();
 
     const allocator = arena.allocator();
-    const tokens = try load_and_parse(allocator, "hello.bf");
-    const options = CompileOptions { .target = .linux_x86, .compile_using = .{ .gcc = GccOptions { .with_libc = true, }, } };
-    try compile_c(allocator, options, tokens, "main");
+    const tokens = try load_and_parse(allocator, "samples/hello.bf");
+    const options = CompileOptions {
+        .target = .linux_x86,
+        .compile_using = .{ .gcc = .{
+            .with_libc = true,
+        }},
+    };
+    try compile_c(allocator, tokens, "main", options);
 
     const ret = try system(
         "/bin/bash",
@@ -275,9 +267,14 @@ test "c_linux_86_hello" {
     defer arena.deinit();
 
     const allocator = arena.allocator();
-    const tokens = try load_and_parse(allocator, "hello.bf");
-    const options = CompileOptions { .target = .linux_x86, .compile_using = .{ .gcc = GccOptions { .with_libc = false, }, } };
-    try compile_c(allocator, options, tokens, "main");
+    const tokens = try load_and_parse(allocator, "samples/hello.bf");
+    const options = CompileOptions {
+        .target = .linux_x86,
+        .compile_using = .{ .gcc = .{
+            .with_libc = false,
+        }},
+    };
+    try compile_c(allocator, tokens, "main", options);
 
     const ret = try system(
         "/bin/bash",
@@ -295,15 +292,21 @@ test "c_linux_86_64_rot13" {
     defer arena.deinit();
 
     const allocator = arena.allocator();
-    const tokens = try load_and_parse(allocator, "rot13.bf");
-    const options = CompileOptions { .target = .linux_x86_64, .compile_using = .{ .gcc = GccOptions { .with_libc = false, }, } };
-    try compile_c(allocator, options, tokens, "main");
+    const tokens = try load_and_parse(allocator, "samples/rot13.bf");
+    const options = CompileOptions {
+        .target = .linux_x86_64,
+        .compile_using = .{ .gcc = .{
+            .with_libc = false,
+        }},
+    };
+    try compile_c(allocator, tokens, "main", options);
 
+    const input = "abcdefghijklmnopqrstuvwxyz";
     const ret = try system(
         "/bin/bash",
         &[_:null]?[*:0]const u8{
             "/bin/bash",
-            "-c", "[ \"`echo 'abcdefghijklmnopqrstuvwxyz' | ./main | ./main`\" == 'abcdefghijklmnopqrstuvwxyz' ]",
+            "-c", "[ \"`echo '" ++ input ++ "' | ./main | ./main`\" == '" ++ input ++  "' ]",
             null,
         }, &[_:null]?[*:0]const u8{null}
     );
