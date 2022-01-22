@@ -91,6 +91,7 @@ fn compile_c (allocator: std.mem.Allocator, options: CompileOptions, tokens: std
         // REPORT struct field initialization with switch does not work
         c_code_header =
             \\#include <syscall.h>
+            \\#include <stdio.h> // for getchar
             \\char buf[1000];
             \\int intputchar(char c);
             \\int main(void) {
@@ -196,7 +197,7 @@ fn translate_c (options: CompileOptions, instr: BFinstr) []const u8 {
         .Dec   => "--*ptr;",        // -
         .From  => "while(*ptr) {",  // [
         .To    => "}",              // ]
-        .Get   => "getchar();",     // ,
+        .Get   => "*ptr = getchar();", // ,
         .Put   => // .
             if (options.compile_using.gcc.with_libc)
                 "putchar(*ptr);"
@@ -242,7 +243,6 @@ test "c_hello" {
     try std.testing.expectEqual(@as(u32, 0), ret.status);
 }
 
-
 test "c_linux_86_hello" {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
@@ -256,6 +256,29 @@ test "c_linux_86_hello" {
         "/bin/bash",
         &[_:null]?[*:0]const u8{
             "/bin/bash", "-c", "diff <(./main) <(echo 'Hello World!')", null,
+        }, &[_:null]?[*:0]const u8{null}
+    );
+
+    // REPORT this is a bug in zig, you can't just use '0'
+    try std.testing.expectEqual(@as(u32, 0), ret.status);
+}
+
+test "c_linux_86_64_rot13" {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+
+    const allocator = arena.allocator();
+    const tokens = try load_and_parse(allocator, "rot13.bf");
+    const options = CompileOptions { .target = .linux_x86_64, .compile_using = .{ .gcc = GccOptions { .with_libc = false, }, } };
+    try compile_c(allocator, options, tokens, "main");
+
+    
+    const ret = try system(
+        "/bin/bash",
+        &[_:null]?[*:0]const u8{
+            "/bin/bash",
+            "-c", "[ \"`echo 'abcdefghijklmnopqrstuvwxyz' | ./main | ./main`\" == 'abcdefghijklmnopqrstuvwxyz' ]",
+            null,
         }, &[_:null]?[*:0]const u8{null}
     );
 
