@@ -20,6 +20,7 @@ pub fn main() anyerror!void {
 
     // loading ===========
     const contents: []u8 = blk: {
+        // try rot13.bf; [ `echo "asdf" ./rot13 | ./rot13` == "asdf" ] && good;
         var file = try std.fs.cwd().openFile("hello.bf", .{ .read = true });
         defer file.close();
 
@@ -89,8 +90,8 @@ fn translate_c (instr :BFinstr) []const u8 {
         .Dec   => "--*ptr;",         // -
         .From  => "while(*ptr) {",   // [
         .To    => "}",               // ]
-        .Get   => "getchar();",      // .
-        .Put   => "putchar(*ptr);",  // ,
+        .Get   => "*ptr = getchar();", // ,
+        .Put   => "putchar(*ptr);",  // .
     };
 }
 
