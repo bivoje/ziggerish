@@ -209,8 +209,8 @@ fn compile_c (
 
 fn translate_c (options: CompileOptions, instr: BFinstr) []const u8 {
     return switch (instr) {
-        .Left  => "++ptr;",         // <
-        .Right => "--ptr;",         // >
+        .Left  => "--ptr;",         // <
+        .Right => "++ptr;",         // >
         .Inc   => "++*ptr;",        // +
         .Dec   => "--*ptr;",        // -
         .From  => "while(*ptr) {",  // [
