@@ -83,8 +83,8 @@ pub fn main() anyerror!void {
 
 fn translate_c (instr :BFinstr) []const u8 {
     return switch (instr) {
-        .Left  => "++ptr;",          // <
-        .Right => "--ptr;",          // >
+        .Left  => "--ptr;",          // <
+        .Right => "++ptr;",          // >
         .Inc   => "++*ptr;",         // +
         .Dec   => "--*ptr;",         // -
         .From  => "while(*ptr) {",   // [
