@@ -75,7 +75,7 @@ fn compile_c (allocator: std.mem.Allocator, options: CompileOptions, tokens: std
     var c_code_footer: [:0]const u8 = undefined;
 
     if (options.compile_using.gcc.with_libc) {
-        const c_code = .{ .header = 
+        const c_code = .{ .header =
             \\#include <stdio.h>
             \\char buf[1000];
             \\int main(void) {
@@ -91,9 +91,9 @@ fn compile_c (allocator: std.mem.Allocator, options: CompileOptions, tokens: std
         // REPORT struct field initialization with switch does not work
         c_code_header =
             \\#include <syscall.h>
-            \\#include <stdio.h> // for getchar
             \\char buf[1000];
             \\int intputchar(char c);
+            \\int intgetchar();
             \\int main(void) {
             \\  char *ptr = buf;
             ;
@@ -109,6 +109,17 @@ fn compile_c (allocator: std.mem.Allocator, options: CompileOptions, tokens: std
                 \\    : "memory"
                 \\  );
                 \\}
+                \\int intgetchar() {
+                \\  int ret;
+                \\  char c;
+                \\  asm volatile (
+                \\    "syscall"
+                \\    : "=a"(ret)
+                \\    : "a"(__NR_read), "D"(0), "S"(&c), "d"(1)
+                \\    : "memory"
+                \\  );
+                \\  return ret==1? c: -1;
+                \\}
                 ,
             .linux_x86 =>
                 \\}
@@ -119,6 +130,17 @@ fn compile_c (allocator: std.mem.Allocator, options: CompileOptions, tokens: std
                 \\    : "a"(__NR_write), "b"(1), "c"(&c), "d"(1)
                 \\    : "memory"
                 \\  );
+                \\}
+                \\int intgetchar() {
+                \\  int ret;
+                \\  char c;
+                \\  asm volatile (
+                \\    "int $0x80"
+                \\    : "=a"(ret)
+                \\    : "a"(__NR_read), "b"(0), "c"(&c), "d"(1)
+                \\    : "memory"
+                \\  );
+                \\  return ret==1? c: -1;
                 \\}
                 ,
             else => unreachable,
@@ -197,7 +219,12 @@ fn translate_c (options: CompileOptions, instr: BFinstr) []const u8 {
         .Dec   => "--*ptr;",        // -
         .From  => "while(*ptr) {",  // [
         .To    => "}",              // ]
-        .Get   => "*ptr = getchar();", // ,
+        .Get   => // ,
+            if (options.compile_using.gcc.with_libc)
+                "*ptr = getchar();"
+            else
+                "*ptr = intgetchar();"
+                  ,
         .Put   => // .
             if (options.compile_using.gcc.with_libc)
                 "putchar(*ptr);"
@@ -272,7 +299,6 @@ test "c_linux_86_64_rot13" {
     const options = CompileOptions { .target = .linux_x86_64, .compile_using = .{ .gcc = GccOptions { .with_libc = false, }, } };
     try compile_c(allocator, options, tokens, "main");
 
-    
     const ret = try system(
         "/bin/bash",
         &[_:null]?[*:0]const u8{
