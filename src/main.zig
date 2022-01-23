@@ -21,6 +21,7 @@ const CompileOptions = struct {
         gcc: struct {
             with_libc: bool,
             inlined: bool = false,
+            temp_path: [:0]const u8 = "temp.c",
         },
         as: struct {
             quick: bool,
@@ -28,29 +29,41 @@ const CompileOptions = struct {
     },
 };
 
-
 pub fn main () anyerror!void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
 
     const allocator = arena.allocator();
-    const tokens = try load_and_parse(allocator, "samples/hello.bf");
+    const tokens = load_and_parse(allocator, "samples/rot13.bf") catch |e| {
+        // TODO elaborate error messages
+        dprint("could not load and parse, {}\n", .{e});
+        return;
+    };
+
     const options = CompileOptions {
-        .target = .linux_x86,
+        .target = .linux_x86_64,
         .compile_using = .{ .gcc = .{
             .with_libc = false,
         }},
     };
-    try compile_c(allocator, tokens, "main", options);
+    compile_gcc(tokens, "main", options) catch |e| {
+        // TODO elaborate error messages
+        dprint("could not compile, {}\n", .{e});
+        return;
+    };
 }
 
-fn load_and_parse (allocator: std.mem.Allocator, src_path: [:0]const u8) !std.ArrayList(BFinstr) {
+fn load_and_parse (
+    allocator: std.mem.Allocator,
+    src_path: [:0]const u8
+) !std.ArrayList(BFinstr) {
     // loading ===========
     const contents: []u8 = blk: {
         var file = try std.fs.cwd().openFile(src_path, .{ .read = true });
         defer file.close();
 
-        break :blk try file.reader().readAllAlloc(allocator, std.math.inf_u64);
+        const maxlen = std.math.inf_u64; // unlimited reading!
+        break :blk try file.reader().readAllAlloc(allocator, maxlen);
     };
 
     // parsing ==========
@@ -61,7 +74,7 @@ fn load_and_parse (allocator: std.mem.Allocator, src_path: [:0]const u8) !std.Ar
         for (contents) |c| {
             if (tokenize(c)) |token| {
                 try tokens.append(token);
-            }
+            } // ignore invalid characters
         }
 
         break :blk tokens;
@@ -70,8 +83,7 @@ fn load_and_parse (allocator: std.mem.Allocator, src_path: [:0]const u8) !std.Ar
     return tokens;
 }
 
-fn compile_c (
-    allocator: std.mem.Allocator,
+fn compile_gcc (
     tokens: std.ArrayList(BFinstr),
     dest_path: [:0]const u8,
     options: CompileOptions,
@@ -163,8 +175,7 @@ fn compile_c (
         ;
     }
 
-    const temp_path: [:0]u8 = try std.fmt.allocPrintZ(allocator, "{s}.c", .{dest_path});
-    defer allocator.free(temp_path);
+    const temp_path: [:0]const u8 = options.compile_using.gcc.temp_path;
 
     // create c tempfile
     {
@@ -297,7 +308,7 @@ test "c_hello" {
             .with_libc = true,
         }},
     };
-    try compile_c(allocator, tokens, "main", options);
+    try compile_gcc(tokens, "main", options);
 
     const ret = try system(
         "/bin/bash",
@@ -322,7 +333,7 @@ test "c_linux_86_hello" {
             .with_libc = false,
         }},
     };
-    try compile_c(allocator, tokens, "main", options);
+    try compile_gcc(tokens, "main", options);
 
     const ret = try system(
         "/bin/bash",
@@ -347,7 +358,7 @@ test "c_linux_86_64_rot13" {
             .with_libc = false,
         }},
     };
-    try compile_c(allocator, tokens, "main", options);
+    try compile_gcc(tokens, "main", options);
 
     const input = "abcdefghijklmnopqrstuvwxyz";
     const ret = try system(
@@ -376,7 +387,7 @@ test "c_inline_linux_86_64_rot13" {
             .inlined = true,
         }},
     };
-    try compile_c(allocator, tokens, "main", options);
+    try compile_gcc(tokens, "main", options);
 
     const input = "abcdefghijklmnopqrstuvwxyz";
     const ret = try system(
