@@ -512,22 +512,114 @@ fn tokenize (c: u8) ?BFinstr {
     };
 }
 
-test "c_hello" {
+const integrated_tests = blk: {
+    // REPORT this makes the array to have same entry for all element
+    //const TestPair = @TypeOf(.{ .@"0"="samples/hello.bf", .@"1"=integrated_test_hello, });
+    // REPORT there's no way to express tuple type...
+    const TestPair = struct {
+        @"0": [:0]const u8,
+        @"1": @TypeOf(integrated_test_hello),
+    };
+    break :blk [_]TestPair {
+        .{ .@"0"="samples/hello.bf", .@"1"=integrated_test_hello, },
+        .{ .@"0"="samples/rot13.bf", .@"1"=integrated_test_rot13, },
+    };
+};
+
+test "integrated" {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
 
     const allocator = arena.allocator();
-    const tokens = try load_and_parse(allocator, "samples/hello.bf");
-    const options = CompileOptions {
-        .target = .linux_x86,
-        .src_path = "samples/hello.bf",
+
+    dprint("\n", .{});
+    for (integrated_tests) |_,i| {
+        try test_for_all_options(allocator, i);
+    }
+}
+
+fn test_for_all_options (
+    al: std.mem.Allocator,
+    i: usize,
+) !void {
+    const tokens = try load_and_parse(al, integrated_tests[i].@"0");
+
+    var options = CompileOptions {
+        .target = .linux_x86, // .linux_x86_64,
+        .src_path = integrated_tests[i].@"0",
         .dst_path = "main",
         .compile_using = .{ .gcc = .{
-            .with_libc = true,
-        }},
+            .with_libc = true, // false
+            .inlined = false, //true
+        }}, // .ass = { }
     };
-    try compile_gcc(tokens, options);
 
+    dprint("{} {s}\n", .{i, integrated_tests[i].@"0",});
+    try test_for_target(al, i, tokens, &options, .linux_x86);
+    try test_for_target(al, i, tokens, &options, .linux_x86_64);
+}
+
+fn test_for_target (
+    al: std.mem.Allocator,
+    i: usize,
+    tokens: std.ArrayList(BFinstr),
+    options: *CompileOptions,
+    target: anytype,
+) !void {
+    options.*.target = target;
+    //try test_for_gcc(al, i, tokens, options);
+    try test_for_as( al, i, tokens, options);
+}
+
+fn test_for_gcc (
+    al: std.mem.Allocator,
+    i: usize,
+    tokens: std.ArrayList(BFinstr),
+    options: *CompileOptions,
+) !void {
+    try test_for_gcc_options (al, i, tokens, options,  true,  true);
+    try test_for_gcc_options (al, i, tokens, options,  true, false);
+    try test_for_gcc_options (al, i, tokens, options, false,  true);
+    try test_for_gcc_options (al, i, tokens, options, false, false);
+}
+
+fn test_for_gcc_options (
+    al: std.mem.Allocator,
+    i: usize,
+    tokens: std.ArrayList(BFinstr),
+    options: *CompileOptions,
+    with_libc: bool,
+    inlined: bool,
+) !void {
+    options.*.compile_using = .{ .gcc = .{
+        .with_libc = with_libc,
+        .inlined = inlined,
+    }};
+    _ = al;
+    dprint("testing ", .{});
+    dump_options(options.*);
+    dprint("\n", .{});
+    try compile_gcc(tokens, options.*);
+    try integrated_tests[i].@"1"();
+}
+
+fn test_for_as (
+    al: std.mem.Allocator,
+    i: usize,
+    tokens: std.ArrayList(BFinstr),
+    options: *CompileOptions,
+) !void {
+    options.*.compile_using = .{ .as = .{
+        .quick = true,
+    }};
+    dprint("testing ", .{});
+    dump_options(options.*);
+    dprint("\n", .{});
+    try compile_as(al, tokens, options.*);
+    try integrated_tests[i].@"1"();
+}
+
+fn integrated_test_hello () !void {
     const ret = try system(
         "/bin/bash",
         &[_:null]?[*:0]const u8{
@@ -539,49 +631,7 @@ test "c_hello" {
     try std.testing.expectEqual(@as(u32, 0), ret.status);
 }
 
-test "c_linux_86_hello" {
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-
-    const allocator = arena.allocator();
-    const tokens = try load_and_parse(allocator, "samples/hello.bf");
-    const options = CompileOptions {
-        .target = .linux_x86,
-        .src_path = "samples/hello.bf",
-        .dst_path = "main",
-        .compile_using = .{ .gcc = .{
-            .with_libc = false,
-        }},
-    };
-    try compile_gcc(tokens, options);
-
-    const ret = try system(
-        "/bin/bash",
-        &[_:null]?[*:0]const u8{
-            "/bin/bash", "-c", "diff <(./main) <(echo 'Hello World!')", null,
-        }, &[_:null]?[*:0]const u8{null}
-    );
-
-    // REPORT this is a bug in zig, you can't just use '0'
-    try std.testing.expectEqual(@as(u32, 0), ret.status);
-}
-
-test "c_linux_86_64_rot13" {
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-
-    const allocator = arena.allocator();
-    const tokens = try load_and_parse(allocator, "samples/rot13.bf");
-    const options = CompileOptions {
-        .target = .linux_x86_64,
-        .src_path = "samples/hello.bf",
-        .dst_path = "main",
-        .compile_using = .{ .gcc = .{
-            .with_libc = false,
-        }},
-    };
-    try compile_gcc(tokens, options);
-
+fn integrated_test_rot13 () !void {
     const input = "abcdefghijklmnopqrstuvwxyz";
     const ret = try system(
         "/bin/bash",
@@ -596,35 +646,39 @@ test "c_linux_86_64_rot13" {
     try std.testing.expectEqual(@as(u32, 0), ret.status);
 }
 
-test "c_inline_linux_86_64_rot13" {
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
+fn dump_options(options: CompileOptions) void {
+    dprint("{s}:\t{s} => {s}\t| {s} - ", .{
+        @tagName(options.target),
+        options.src_path, options.dst_path,
+        @tagName(options.compile_using),
+    });
 
-    const allocator = arena.allocator();
-    const tokens = try load_and_parse(allocator, "samples/rot13.bf");
-    const options = CompileOptions {
-        .target = .linux_x86_64,
-        .src_path = "samples/hello.bf",
-        .dst_path = "main",
-        .compile_using = .{ .gcc = .{
-            .with_libc = false,
-            .inlined = true,
-        }},
+    //const none: [:0] const u8 = "";
+
+    _ = switch (options.compile_using) {
+        .gcc => |opts|
+            // REPORT it does not even work...
+            //dprint("{s} {s}", .{
+            //    // REPORT, peer coercing does not happen between if branches
+            //    // strictly coerced into the type of 'then' branch
+            //    //if (opts.with_libc) "with_libc" else "",
+            //    //if (opts.inlined) "inlined" else "",
+            //    if (!opts.with_libc) none else "with_libc",
+            //    if (!opts.inlined) none else "inlined",
+            //}),
+            dprint("{} {}", .{
+                opts.with_libc,
+                opts.inlined,
+            }),
+        .as => |opts|
+            //dprint("{s}", .{
+            //    //if (opts.quick) "quick" else "",
+            //    if (!opts.quick) none else "quick",
+            //}),
+            dprint("{}", .{
+                opts.quick,
+            }),
     };
-    try compile_gcc(tokens, options);
-
-    const input = "abcdefghijklmnopqrstuvwxyz";
-    const ret = try system(
-        "/bin/bash",
-        &[_:null]?[*:0]const u8{
-            "/bin/bash",
-            "-c", "[ \"`echo '" ++ input ++ "' | ./main | ./main`\" == '" ++ input ++  "' ]",
-            null,
-        }, &[_:null]?[*:0]const u8{null}
-    );
-
-    // REPORT this is a bug in zig, you can't just use '0'
-    try std.testing.expectEqual(@as(u32, 0), ret.status);
 }
 
 fn test_system () !void {
