@@ -108,7 +108,7 @@ fn compile_as (
 
     const asm_meta = //TODO
         \\	.file	"{s}"
-        \\	.ident	"Sigmund: ({s} {any}) {any} {s}"
+        \\	.ident	"Ziggerish: ({s} {any}) {any} {s}"
         \\
         ;
 
