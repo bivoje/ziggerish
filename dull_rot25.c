@@ -1,10 +1,12 @@
 #include <syscall.h>
-#include <stdlib.h>
-static char buf[1000];
-static int intputchar(char *c);
-static int intgetchar(char *c);
+#include <unistd.h> // read/write
+#include <stdlib.h> // exit
 
-int main(void) {
+static char buf[1000];
+static void intputchar(char *c);
+static void intgetchar(char *c);
+
+void main(void) {
   char *ptr = buf;
   ++*ptr;
   while(*ptr) {
@@ -18,43 +20,11 @@ int main(void) {
   exit(0);
 }
 
-#ifdef BIT64
-int intputchar(char *c) {
-  asm volatile (
-    "syscall"
-    :
-    : "a"(__NR_write), "D"(1), "S"(c), "d"(1)
-    : "memory"
-  );
-}
-int intgetchar(char *c) {
-  int ret;
-  asm volatile (
-    "syscall"
-    : "=a"(ret)
-    : "a"(__NR_read), "D"(0), "S"(c), "d"(1)
-    : "memory"
-  );
-  if(ret!=1) *c=-1; // -1 == EOF
+void intputchar(char *c) {
+  int x = write(1, c, 1);
 }
 
-#else
-int intputchar(char *c) {
-  asm volatile (
-    "int $0x80"
-    :
-    : "a"(__NR_write), "b"(1), "c"(c), "d"(1)
-    : "memory"
-  );
-}
-int intgetchar(char *c) {
-  int ret;
-  asm volatile (
-    "int $0x80"
-    : "=a"(ret)
-    : "a"(__NR_read), "b"(0), "c"(c), "d"(1)
-    : "memory"
-  );
+void intgetchar(char *c) {
+  int ret = read(0, c, 1);
   if(ret!=1) *c=-1; // -1 == EOF
 }
-#endif
