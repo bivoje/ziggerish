@@ -1,5 +1,8 @@
 const std = @import("std");
 const dprint = std.debug.print;
+const C = @cImport({
+    @cInclude("stdlib.h");
+});
 
 const BFinstr = enum {
     Left,  // <
@@ -13,14 +16,11 @@ const BFinstr = enum {
 };
 
 const CompileOptions = struct {
-    target: enum {
+    pub const Target = enum {
         linux_x86, linux_x86_64, windows,
-    },
+    };
 
-    src_path :[:0]const u8,
-    dst_path :[:0]const u8,
-
-    compile_using: union(enum) {
+    pub const CompileUsing = union(enum) {
         gcc: struct {
             with_libc: bool = true,
             inlined: bool = false,
@@ -38,53 +38,200 @@ const CompileOptions = struct {
         },
         clang: struct {
         },
-    },
+    };
+
+    src_path: [:0]const u8 = "-", // default to stdin
+    dst_path: [:0]const u8 = "-", // default to stdout
+    target: Target,
+    mem_size: usize = 1000,
+    verbose: bool = false,
+    warning: bool = true,
+
+    compile_using: CompileUsing,
 };
 
 pub fn main () anyerror!void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
-
-    const options = CompileOptions {
-        .target = .linux_x86_64,
-        //.src_path = "samples/rot25.bf",
-        //.src_path = "samples/hello.bf",
-        .src_path = "samples/rot13.bf",
-        .dst_path = "main",
-        //.compile_using = .{ .gcc = .{
-        //    .with_libc = false,
-        //    .quick = false,
-        //}},
-        //.compile_using = .{ .llvm = .{
-        //}},
-        .compile_using = .{ .as = .{
-        }},
-    };
-
     const allocator = arena.allocator();
+
+    // it allocates and copies each arg into a new memory,
+    // we dont need it as only comparison & const refering is required.
+    //var arg_it = std.process.args();
+    //_ = arg_it.skip();
+    //_ = arg_it.next(al);
+
+    // so, instead, we acess os.argv directly.
+    // REPORT this panics zig compiler
+    // const options  = try parse_opt(allocator, argv);
+    const argv: [][*:0]const u8 = std.os.argv;
+    const options  = try parse_opt(allocator, argv);
+    dump_options(options);
+    dprint("\n", .{});
+
     const tokens = load_and_parse(allocator, options.src_path) catch |e| {
         // TODO elaborate error messages
         dprint("could not load and parse, {}\n", .{e});
         return;
     };
 
-    //compile_ll(tokens, options) catch |e| {
-    //    // TODO elaborate error messages
-    //    dprint("could not compile, {}\n", .{e});
-    //    return;
-    //};
-
-    compile_cl(tokens, options) catch |e| {
+    compile(allocator, tokens, options) catch |e| {
         // TODO elaborate error messages
         dprint("could not compile, {}\n", .{e});
         return;
     };
+}
 
-    //compile_gcc(tokens, options) catch |e| {
-    //    // TODO elaborate error messages
-    //    dprint("could not compile, {}\n", .{e});
-    //    return;
-    //};
+const ArgError = error {
+    InvalidPrefix,
+    NoAssignValue,
+    UnknownOption,
+    UnknownValue,
+    MalformedArg,
+} || error {OutOfMemory};
+
+fn parse_opt (al: std.mem.Allocator, argv: [][*:0]const u8) ArgError!CompileOptions {
+    var options = CompileOptions {
+         // FIXME get default target at compile time
+        .target = .linux_x86_64,
+        .compile_using = .{ .as = .{}},
+    };
+
+    var i: usize = 0;
+    //e.g: ziggerish hello.bf : ?target=linux_x86 ?mem_size=200 +verbose warning?=false : gcc +inlined -with_libc =temp_path?temp.c : hello
+
+    // input file
+    // TODO multi-source compile not supported, yet.
+    i += 1; // skip progname
+    while (i < argv.len) : (i+=1) {
+        const arg = std.mem.sliceTo(argv[i], 0);
+        if (std.mem.eql(u8, arg, ":")) break;
+        options.src_path = std.mem.sliceTo(argv[i], 0);
+    }
+
+    // general options
+    i += 1; // skip ':'
+    i += try set_param_struct(CompileOptions, i, argv, &options, assign_struct_field, al);
+
+    // compile method specific options
+    i += 1; // skip ':'
+    {
+        const arg = if (i < argv.len) std.mem.sliceTo(argv[i], 0)
+                    else return error.MalformedArg;
+        i += 1;
+
+        inline for (@typeInfo(CompileOptions.CompileUsing).Union.fields) |field| {
+            if (std.mem.eql(u8, field.name, arg)) {
+                var method_options = field.field_type {};
+                i += try set_param_struct(field.field_type, i, argv, &method_options, assign_struct_field, al);
+                options.compile_using = @unionInit(CompileOptions.CompileUsing, field.name, method_options);
+            }
+        }
+    }
+
+    // output file
+    // TODO correctly handle multiple files
+    i += 1; // skip ':'
+    while (i < argv.len) : (i+=1) {
+        const arg = std.mem.sliceTo(argv[i], 0);
+        if (std.mem.eql(u8, arg, ":")) break;
+        options.dst_path = std.mem.sliceTo(argv[i], 0);
+    }
+
+    return options;
+}
+
+fn set_param_struct (
+    comptime T: type,
+    _i: usize,
+    argv: [][*:0]const u8,
+    options: *T,
+    assign: fn (
+        type,
+        comptime std.builtin.TypeInfo.StructField,
+        *T,
+        []const u8,
+        std.mem.Allocator
+    ) ArgError!void,
+    allocator: std.mem.Allocator,
+) ArgError!usize { // returns # of args read
+    var i = _i;
+    while (i < argv.len) : (i+=1) {
+        //convert [*:0]u8 (unknown len) to [:0]u8 (runtime-known len)
+        const arg = std.mem.sliceTo(argv[i], 0);
+        if (std.mem.eql(u8, arg, ":")) break;
+
+        var key: []const u8 = undefined;
+        var val: []const u8 = undefined;
+        switch (arg[0]) {
+            @as(u8,'?') => {
+                const j = std.mem.indexOfScalar(u8, arg, @as(u8,'='))
+                          orelse return error.NoAssignValue;
+                {key=arg[1..j]; val=arg[j+1..];}
+            },
+            @as(u8,'+') => {key=arg[1..]; val="true"; },
+            @as(u8,'-') => {key=arg[1..]; val="false"; },
+            else => {
+                dprint("invalid prefix: {s}\n", .{arg});
+                return error.InvalidPrefix;
+            },
+        }
+
+//        const fields = switch (@typeInfo(T)) {
+//            .Struct => |e| e.fields,
+//            .Union  => |e| e.fields,
+//            else => @compileError("container required for set_param_struct"),
+//        };
+
+        inline for (@typeInfo(T).Struct.fields) |field| {
+            if (std.mem.eql(u8, field.name, key)) {
+                try assign(T, field, options, val, allocator);
+                break;
+            }
+        } else return error.UnknownOption;
+    }
+
+    return i - _i;
+}
+
+fn assign_struct_field (
+    comptime T: type,
+    comptime field: std.builtin.TypeInfo.StructField,
+    options: *T,
+    val: []const u8,
+    al: std.mem.Allocator
+) ArgError!void {
+    switch (field.field_type) {
+        bool => {
+            if (std.mem.eql(u8, val, "true")) {
+                @field(options, field.name) = true;
+            } else if (std.mem.eql(u8, val, "false")) {
+                @field(options, field.name) = false;
+            } else return error.UnknownValue;
+        },
+        [:0]const u8 => {
+            // FIXME only valid in arena allocator,
+            // it never frees allocated memory
+            @field(options, field.name) = try al.dupeZ(u8,val);
+        },
+        CompileOptions.Target => {
+            inline for (@typeInfo(field.field_type).Enum.fields) |efield| {
+                if (std.mem.eql(u8, efield.name, val)) {
+                    options.target = @intToEnum(field.field_type, efield.value);
+                    return;
+                }
+            } return error.UnknownValue;
+        },
+        usize => {
+            // FIXME what if negative given?
+            const ret: c_int = C.atoi(@ptrCast([*c]const u8, val));
+            @field(options, field.name) = @intCast(usize, ret);
+        },
+        else => {
+            dprint("{s} {} {s}\n", .{field.name, field.field_type, val});
+            unreachable;
+        },
+    }
 }
 
 fn load_and_parse (
@@ -115,6 +262,19 @@ fn load_and_parse (
     };
 
     return tokens;
+}
+
+fn compile (
+    al : std.mem.Allocator,
+    tokens: std.ArrayList(BFinstr),
+    options: CompileOptions,
+) !void {
+    return switch(options.compile_using) {
+        .gcc    => compile_gcc(tokens, options),
+        .as     => compile_as(al, tokens, options),
+        .llvm   => compile_ll(tokens, options),
+        .clang  => compile_cl(tokens, options),
+    };
 }
 
 fn compile_ll (
@@ -872,6 +1032,33 @@ fn tokenize (c: u8) ?BFinstr {
     };
 }
 
+test "argparse" {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    // REPORT why in the hell can't i use const here?
+    var argv = [_][*:0]const u8 {
+        "ziggerish",
+        "samples/hello.bf", ":",
+        "?target=linux_x86", "?mem_size=200", "+verbose", "?warning=false", ":",
+        "gcc", "+inlined", "-with_libc", "?temp_path=temp.c", ":",
+        "hello",
+    };
+
+    const ret = try parse_opt(allocator, &argv);
+
+    try std.testing.expect(std.mem.eql(u8, ret.src_path, "samples/hello.bf"));
+    try std.testing.expect(std.mem.eql(u8, ret.dst_path, "hello"));
+    try std.testing.expectEqual(ret.target, .linux_x86);
+    try std.testing.expectEqual(ret.mem_size, 200);
+    try std.testing.expectEqual(ret.verbose, true);
+    try std.testing.expectEqual(ret.warning, false);
+    try std.testing.expectEqual(ret.compile_using.gcc.inlined, true);
+    try std.testing.expectEqual(ret.compile_using.gcc.with_libc, false);
+    try std.testing.expect(std.mem.eql(u8, ret.compile_using.gcc.temp_path, "temp.c"));
+}
+
 const integrated_tests = blk: {
     // REPORT this makes the array to have same entry for all element
     //const TestPair = @TypeOf(.{ .@"0"="samples/hello.bf", .@"1"=integrated_test_hello, });
@@ -1080,6 +1267,12 @@ fn dump_options(options: CompileOptions) void {
                 ".",
             }),
     };
+
+    dprint(" | {} {} {} ", .{
+        options.mem_size,
+        options.verbose,
+        options.warning,
+    });
 }
 
 fn test_system () !void {
