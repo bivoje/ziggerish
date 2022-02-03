@@ -76,7 +76,7 @@ fn load_and_parse (
 ) !std.ArrayList(BFinstr) {
     // loading ===========
     const contents: []u8 = blk: {
-        var file = try std.fs.cwd().openFile(src_path, .{ .read = true });
+        var file = try std.fs.cwd().openFile(src_path, .{});
         defer file.close();
 
         const maxlen = std.math.inf_u64; // unlimited reading!

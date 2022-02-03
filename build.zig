@@ -32,13 +32,6 @@ pub fn build(b: *std.build.Builder) void {
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&exe_tests.step);
 
-    const watch_step = b.step("watch-test", "Watch and test");
-    watch_step.makeFn = watch_test;
-}
-
-fn watch_test(self: *std.build.Step) !void {
-    _ = self;
-
     const cmd =
         \\pwd
         \\while inotifywait --quiet src/main.zig; do
@@ -48,14 +41,8 @@ fn watch_test(self: *std.build.Step) !void {
         \\done
         ;
 
-    return std.os.execvpeZ(
-        "/bin/bash",
-        &[_:null]?[*:0]const u8{
-            "/bin/bash", "-c", cmd, null,
-        }, &[_:null]?[*:0]const u8{
-            "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:~/bin",
-            "HOME=/root",
-            null,
-        }
-    );
+    const run_wt = b.addSystemCommand(&[_][]const u8{ "/bin/bash", "-c", cmd });
+
+    const watch_step = b.step("watch-test", "Watch and test");
+    watch_step.dependOn(&run_wt.step);
 }
