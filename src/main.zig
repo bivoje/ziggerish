@@ -47,7 +47,7 @@ const CompileOptions = struct {
     verbose: bool = false,
     warning: bool = true,
 
-    compile_using: CompileUsing,
+    method: CompileUsing,
 };
 
 pub fn main () anyerror!void {
@@ -94,7 +94,7 @@ fn parse_opt (al: std.mem.Allocator, argv: [][*:0]const u8) ArgError!CompileOpti
     var options = CompileOptions {
          // FIXME get default target at compile time
         .target = .linux_x86_64,
-        .compile_using = .{ .as = .{}},
+        .method = .{ .as = .{}},
     };
 
     var i: usize = 0;
@@ -124,7 +124,7 @@ fn parse_opt (al: std.mem.Allocator, argv: [][*:0]const u8) ArgError!CompileOpti
             if (std.mem.eql(u8, field.name, arg)) {
                 var method_options = field.field_type {};
                 i += try set_param_struct(field.field_type, i, argv, &method_options, assign_struct_field, al);
-                options.compile_using = @unionInit(CompileOptions.CompileUsing, field.name, method_options);
+                options.method = @unionInit(CompileOptions.CompileUsing, field.name, method_options);
             }
         }
     }
@@ -269,7 +269,7 @@ fn compile (
     tokens: std.ArrayList(BFinstr),
     options: CompileOptions,
 ) !void {
-    return switch(options.compile_using) {
+    return switch(options.method) {
         .gcc    => compile_gcc(tokens, options),
         .as     => compile_as(al, tokens, options),
         .llvm   => compile_ll(tokens, options),
@@ -339,7 +339,7 @@ fn compile_ll (
         ;
 
     var file = try std.fs.cwd().createFile(
-        options.compile_using.llvm.temp_path_ll,
+        options.method.llvm.temp_path_ll,
         .{ .read = true, }
     );
     defer file.close();
@@ -360,7 +360,7 @@ fn compile_ll (
         &[_:null]?[*:0]const u8{
             "clang",
             "-o", options.dst_path,
-            options.compile_using.llvm.temp_path_ll,
+            options.method.llvm.temp_path_ll,
             null,
         }, &[_:null]?[*:0]const u8{
             "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
@@ -620,7 +620,7 @@ fn compile_as (
     // create *.s tempfile
     {
         var file = try std.fs.cwd().createFile(
-            options.compile_using.as.temp_path_s,
+            options.method.as.temp_path_s,
             .{ .read = true, }
         );
         defer file.close();
@@ -725,8 +725,8 @@ fn compile_as (
         "as",
         &[_:null]?[*:0]const u8{
             "as",
-            "-o", options.compile_using.as.temp_path_o,
-            options.compile_using.as.temp_path_s,
+            "-o", options.method.as.temp_path_o,
+            options.method.as.temp_path_s,
             switch (options.target) {
                 .linux_x86 => "--32",
                 .linux_x86_64 => "--64",
@@ -757,7 +757,7 @@ fn compile_as (
             // we can use other symbol than '_start'!
             // https://sourceware.org/binutils/docs/ld/Entry-Point.html
             "-o", options.dst_path,
-            options.compile_using.as.temp_path_o,
+            options.method.as.temp_path_o,
             null,
         }, &[_:null]?[*:0]const u8{
             "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
@@ -819,12 +819,12 @@ fn compile_gcc (
     options: CompileOptions,
 ) !void {
     // REPORT zig does not let me use if as ternary expression <- with block body
-    //const c_code = if (options.compile_using.gcc.with_libc) {
+    //const c_code = if (options.method.gcc.with_libc) {
 
     var c_code_header: [:0]const u8 = undefined;
     var c_code_footer: [:0]const u8 = undefined;
 
-    if (options.compile_using.gcc.with_libc) {
+    if (options.method.gcc.with_libc) {
         c_code_header =
             \\#include <stdio.h>
             \\char buf[1000];
@@ -837,7 +837,7 @@ fn compile_gcc (
             ;
 
     } else {
-        c_code_header = if (! options.compile_using.gcc.inlined)
+        c_code_header = if (! options.method.gcc.inlined)
             \\#include <syscall.h>
             \\char buf[1000];
             \\int intputchar(char c);
@@ -853,7 +853,7 @@ fn compile_gcc (
         ;
 
         // https://gcc.gnu.org/onlinedocs/gcc/Using-Assembly-Language-with-C.html
-        c_code_footer = if (!options.compile_using.gcc.inlined) switch(options.target) {
+        c_code_footer = if (!options.method.gcc.inlined) switch(options.target) {
             .linux_x86_64 =>
                 \\}
                 \\int intputchar(char c) {
@@ -905,7 +905,7 @@ fn compile_gcc (
         ;
     }
 
-    const temp_path: [:0]const u8 = options.compile_using.gcc.temp_path;
+    const temp_path: [:0]const u8 = options.method.gcc.temp_path;
 
     // create c tempfile
     {
@@ -931,7 +931,7 @@ fn compile_gcc (
             "gcc",
             "-o", options.dst_path,
             temp_path,
-            if (options.compile_using.gcc.with_libc)
+            if (options.method.gcc.with_libc)
                 "-lc" // using it as a no-op option, needed place holder
             else switch (options.target) {
                 .linux_x86 => "-m32",
@@ -963,9 +963,9 @@ fn translate_c (options: CompileOptions, instr: BFinstr) []const u8 {
         .From  => "while(*ptr) {",  // [
         .To    => "}",              // ]
         .Get   => // ,
-            if (options.compile_using.gcc.with_libc)
+            if (options.method.gcc.with_libc)
                 "*ptr = getchar();"
-            else if (! options.compile_using.gcc.inlined)
+            else if (! options.method.gcc.inlined)
                 "*ptr = intgetchar();"
             else switch (options.target) {
                 .linux_x86_64 =>
@@ -989,9 +989,9 @@ fn translate_c (options: CompileOptions, instr: BFinstr) []const u8 {
                 else => unreachable,
             },
         .Put   => // .
-            if (options.compile_using.gcc.with_libc)
+            if (options.method.gcc.with_libc)
                 "putchar(*ptr);"
-            else if (! options.compile_using.gcc.inlined)
+            else if (! options.method.gcc.inlined)
                 "intputchar(*ptr);"
             else switch (options.target) {
                 .linux_x86_64 =>
@@ -1054,9 +1054,9 @@ test "argparse" {
     try std.testing.expectEqual(ret.mem_size, 200);
     try std.testing.expectEqual(ret.verbose, true);
     try std.testing.expectEqual(ret.warning, false);
-    try std.testing.expectEqual(ret.compile_using.gcc.inlined, true);
-    try std.testing.expectEqual(ret.compile_using.gcc.with_libc, false);
-    try std.testing.expect(std.mem.eql(u8, ret.compile_using.gcc.temp_path, "temp.c"));
+    try std.testing.expectEqual(ret.method.gcc.inlined, true);
+    try std.testing.expectEqual(ret.method.gcc.with_libc, false);
+    try std.testing.expect(std.mem.eql(u8, ret.method.gcc.temp_path, "temp.c"));
 }
 
 const integrated_tests = blk: {
@@ -1095,7 +1095,7 @@ fn test_for_all_options (
         .target = .linux_x86, // .linux_x86_64,
         .src_path = integrated_tests[i].@"0",
         .dst_path = "main",
-        .compile_using = .{ .gcc = .{
+        .method = .{ .gcc = .{
             .with_libc = true, // false
             .inlined = false, //true
         }}, // .ass = { }
@@ -1114,7 +1114,7 @@ fn test_for_target (
     target: anytype,
 ) !void {
     options.*.target = target;
-    //try test_for_gcc(al, i, tokens, options);
+    try test_for_gcc(al, i, tokens, options);
     //try test_for_cl( al, i, tokens, options);
     try test_for_as( al, i, tokens, options);
     try test_for_ll( al, i, tokens, options);
@@ -1140,7 +1140,7 @@ fn test_for_gcc_options (
     with_libc: bool,
     inlined: bool,
 ) !void {
-    options.*.compile_using = .{ .gcc = .{
+    options.*.method = .{ .gcc = .{
         .with_libc = with_libc,
         .inlined = inlined,
     }};
@@ -1159,7 +1159,7 @@ fn test_for_cl (
     options: *CompileOptions,
 ) !void {
     _ = al;
-    options.*.compile_using = .{ .clang = .{
+    options.*.method = .{ .clang = .{
     }};
     dprint("testing ", .{});
     dump_options(options.*);
@@ -1174,7 +1174,7 @@ fn test_for_as (
     tokens: std.ArrayList(BFinstr),
     options: *CompileOptions,
 ) !void {
-    options.*.compile_using = .{ .as = .{
+    options.*.method = .{ .as = .{
     }};
     dprint("testing ", .{});
     dump_options(options.*);
@@ -1190,7 +1190,7 @@ fn test_for_ll (
     options: *CompileOptions,
 ) !void {
     _ = al;
-    options.*.compile_using = .{ .llvm = .{
+    options.*.method = .{ .llvm = .{
     }};
     dprint("testing ", .{});
     dump_options(options.*);
@@ -1230,12 +1230,12 @@ fn dump_options(options: CompileOptions) void {
     dprint("{s}:\t{s} => {s}\t| {s} - ", .{
         @tagName(options.target),
         options.src_path, options.dst_path,
-        @tagName(options.compile_using),
+        @tagName(options.method),
     });
 
     //const none: [:0] const u8 = "";
 
-    _ = switch (options.compile_using) {
+    _ = switch (options.method) {
         .gcc => |opts|
             // REPORT it does not even work...
             //dprint("{s} {s}", .{
