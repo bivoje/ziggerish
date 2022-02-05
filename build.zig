@@ -36,7 +36,7 @@ pub fn build(b: *std.build.Builder) void {
 
     const cmd =
         \\pwd
-        \\while inotifywait --quiet src/main.zig; do
+        \\while inotifywait --quiet src; do
         \\  echo -e "\x1b[34mTest Start ===================\x1b[0m"
         \\  sleep 0.1
         \\  zig build test

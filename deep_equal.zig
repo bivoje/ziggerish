@@ -16,8 +16,8 @@ fn deep_equal(comptime T: type, ref: T, new: T) bool {
             },
             .C => @compileError("can't compare c_ptr"),
         },
-        .Array  => |A| std.mem.eql(A.child, &ref, &new),
-        .Vector => @reduce(.And, ref == new),
+        .Array  => |A| std.mem.eql(A.child, &ref, &new), // FIXME what if pointer?
+        .Vector => @reduce(.And, ref == new), // FIXME what if pointer?
         .Optional   => |O| if     (ref == null and new == null) true
                            else if(ref == null and new != null) false
                            else if(ref != null and new == null) false
