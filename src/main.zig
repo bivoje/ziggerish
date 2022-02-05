@@ -207,11 +207,10 @@ fn test_for_gcc_options (
         .libc = libc,
         .inlined = inlined,
     }};
-    _ = al;
     dprint("testing ", .{});
     options.dump();
     dprint("\n", .{});
-    try using_c.compile(tokens, options.*);
+    try using_c.compile(al, tokens, options.*);
     try integrated_tests[i].@"1"();
 }
 

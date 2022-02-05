@@ -4,205 +4,214 @@ const std = @import("std");
 const BFinstr        = @import("types.zig").BFinstr;
 const CompileOptions = @import("types.zig").CompileOptions;
 
-const system = @import("util.zig").system;
-
 pub fn compile (
+    al: std.mem.Allocator,
     tokens: std.ArrayList(BFinstr),
     options: CompileOptions,
 ) !void {
-    // REPORT zig does not let me use if as ternary expression <- with block body
-    //const c_code = if (options.method.gcc.libc) {
 
-    var c_code_header: [:0]const u8 = undefined;
-    var c_code_footer: [:0]const u8 = undefined;
+    var gcc = options.method.gcc;
 
-    if (options.method.gcc.libc) {
-        c_code_header =
+    if (gcc.inlined and gcc.libc) {
+        // TODO warn the user
+        gcc.inlined = false;
+    }
+
+    // TODO extract
+    const exit_body = switch (options.target) {
+        .linux_x86_64 =>
+            \\  asm volatile (
+            \\    "syscall"
+            \\    :
+            \\    : "a"(__NR_exit), "D"(0)
+            \\    : "memory"
+            \\  );
+            ,
+        .linux_x86 =>
+            \\  asm volatile (
+            \\    "int $0x80"
+            \\    :
+            \\    : "a"(__NR_exit), "b"(0)
+            \\    : "memory"
+            \\  );
+            ,
+        else => unreachable,
+    };
+
+    const putc_body = switch (options.target) {
+        .linux_x86_64 =>
+            \\  asm volatile (
+            \\    "syscall"
+            \\    :
+            \\    : "a"(__NR_write), "D"(1), "S"(ptr), "d"(1)
+            \\    : "memory"
+            \\  );
+            ,
+        .linux_x86 =>
+            \\  asm volatile (
+            \\    "int $0x80"
+            \\    :
+            \\    : "a"(__NR_write), "b"(1), "c"(ptr), "d"(1)
+            \\    : "memory"
+            \\  );
+            ,
+        else => unreachable,
+    };
+
+    const getc_body  = switch (options.target) {
+        .linux_x86_64 =>
+            \\  asm volatile (
+            \\    "syscall"//
+            \\    : "=a"(ret)
+            \\    : "a"(__NR_read), "D"(0), "S"(ptr), "d"(1)
+            \\    : "memory"
+            \\  );
+            \\  if (ret!=1) *ptr = -1;
+            ,
+        .linux_x86 =>
+            \\  asm volatile (
+            \\    "int $0x80"
+            \\    : "=a"(ret)
+            \\    : "a"(__NR_read), "b"(0), "c"(ptr), "d"(1)
+            \\    : "memory"
+            \\  );
+            \\  if (ret!=1) *ptr = -1;
+            ,
+        else => unreachable,
+    };
+
+    const getchar: []const u8 =
+        if (gcc.inlined) getc_body
+        else if (gcc.libc) "  *ptr = getchar();"
+        else "  intgetchar(ptr);";
+
+    const putchar: []const u8 =
+        if (gcc.inlined) putc_body
+        else if (gcc.libc) "  putchar(*ptr);"
+        else "  intputchar(ptr);";
+
+    var file = try std.fs.cwd().createFile(gcc.temp_path, .{ .read = true, });
+    defer file.close();
+    var w = file.writer();
+
+    try w.writeAll(
+        \\char buf[1000];
+        \\
+    );
+
+    if (gcc.libc) {
+        try w.writeAll(
             \\#include <stdio.h>
-            \\char buf[1000];
-            \\int main(void) {
-            \\  char *ptr = buf;
-            ;
-
-        c_code_footer =
-            \\}
-            ;
-
+            \\#include <stdlib.h>
+            \\
+        );
     } else {
-        c_code_header = if (! options.method.gcc.inlined)
+        try w.writeAll(
             \\#include <syscall.h>
-            \\char buf[1000];
-            \\int intputchar(char c);
-            \\int intgetchar();
-            \\int main(void) {
-            \\  char *ptr = buf;
-        else
-            \\#include <syscall.h>
-            \\char buf[1000];
-            \\int main(void) {
+            \\
+        );
+        if (! gcc.inlined) {
+            try w.writeAll(
+                \\void intputchar(char *ptr) {
+                \\
+            );
+
+            try w.writeAll(putc_body);
+
+            try w.writeAll(
+                \\
+                \\}
+                \\
+                \\void intgetchar(char *ptr) {
+                \\  int ret;
+                \\
+            );
+
+            try w.writeAll(getc_body);
+
+            try w.writeAll(
+                \\
+                \\}
+                \\
+                \\void intexit() {
+                \\
+            );
+
+            try w.writeAll(exit_body);
+
+            try w.writeAll(
+                \\
+                \\}
+                \\
+            );
+        } // not inlined
+    } // not libc
+
+    try w.writeAll(
+        \\int main(void) {
+        \\  char *ptr = buf;
+        \\
+    );
+
+    if (gcc.inlined)
+        try w.writeAll(
             \\  int ret; // used to store return value of read syscall
-            \\  char *ptr = buf;
-        ;
+            \\
+        );
 
-        // https://gcc.gnu.org/onlinedocs/gcc/Using-Assembly-Language-with-C.html
-        c_code_footer = if (!options.method.gcc.inlined) switch(options.target) {
-            .linux_x86_64 =>
-                \\}
-                \\int intputchar(char c) {
-                \\  asm volatile (
-                \\    "syscall"
-                \\    :
-                \\    : "a"(__NR_write), "D"(1), "S"(&c), "d"(1)
-                \\    : "memory"
-                \\  );
-                \\}
-                \\int intgetchar() {
-                \\  int ret;
-                \\  char c;
-                \\  asm volatile (
-                \\    "syscall"
-                \\    : "=a"(ret)
-                \\    : "a"(__NR_read), "D"(0), "S"(&c), "d"(1)
-                \\    : "memory"
-                \\  );
-                \\  return ret==1? c: -1; // -1 == EOF
-                \\}
-                ,
+    // main body
+    for (tokens.items) |token| {
+        try w.writeAll(switch (token) {
+            .Left  => "  --ptr;",         // <
+            .Right => "  ++ptr;",         // >
+            .Inc   => "  ++*ptr;",        // +
+            .Dec   => "  --*ptr;",        // -
+            .From  => "  while(*ptr) {",  // [
+            .To    => "  }",              // ]
+            .Get   => getchar,            // ,
+                // REPORT need explicit casting to invoke proper peer resol
+            .Put   => putchar,            // .
+        });
 
-            .linux_x86 =>
-                \\}
-                \\int intputchar(char c) {
-                \\  asm volatile (
-                \\    "int $0x80"
-                \\    :
-                \\    : "a"(__NR_write), "b"(1), "c"(&c), "d"(1)
-                \\    : "memory"
-                \\  );
-                \\}
-                \\int intgetchar() {
-                \\  int ret;
-                \\  char c;
-                \\  asm volatile (
-                \\    "int $0x80"
-                \\    : "=a"(ret)
-                \\    : "a"(__NR_read), "b"(0), "c"(&c), "d"(1)
-                \\    : "memory"
-                \\  );
-                \\  return ret==1? c: -1; // -1 == EOF
-                \\}
-                ,
-            else => unreachable,
-        } else
-            \\}
-        ;
+        try w.writeAll("\n");
     }
 
-    const temp_path: [:0]const u8 = options.method.gcc.temp_path;
+    try w.writeAll(
+        if (gcc.inlined) exit_body
+        else if (gcc.libc) "  exit(0);"
+        else "  intexit();",
+    );
 
-    // create c tempfile
-    {
-        var file = try std.fs.cwd().createFile(temp_path, .{ .read = true, });
-        defer file.close();
 
-        try file.writeAll(c_code_header);
-
-        for (tokens.items) |token| {
-            try file.writeAll(translate(options, token));
-            try file.writeAll("\n");
-        }
-
-        try file.writeAll(c_code_footer);
-    }
+    try w.writeAll("\n}\n");
 
     // REPORT execvpe does not hand over PATH var to the subproc if the path is absolute
     // furthermore, it is not get exported to child env (PATH only used to find the executable,
     // but the subproc doesn't get it). so we have to specify path anyway...
-    const ret = try system(
-        "gcc",
-        &[_:null]?[*:0]const u8{
+    const proc = try std.ChildProcess.init(
+        &[_] []const u8{
             "gcc",
             "-o", options.dst_path,
-            temp_path,
-            if (options.method.gcc.libc)
+            gcc.temp_path,
+            if (gcc.libc)
                 "-lc" // using it as a no-op option, needed place holder
             else switch (options.target) {
                 .linux_x86 => "-m32",
                 .linux_x86_64 => "-m64",
                 else => unreachable,
             },
-            null,
-        }, &[_:null]?[*:0]const u8{
-            "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-            null
-        }
+        },
         // NOTE to compile 32bit executable on 64bit system with gcc
         // you would need gcc-multilib package installed.
         // this is another dependency using gcc (with build-essentials)
         // https://stackoverflow.com/a/46564864
         // though, you cannot do so on Alpine Linux
         // https://stackoverflow.com/a/40574830
+        al,
     );
 
-    if (ret.status != 0) return error.GccError;
-}
-
-fn translate (options: CompileOptions, instr: BFinstr) []const u8 {
-    return switch (instr) {
-        .Left  => "--ptr;",         // <
-        .Right => "++ptr;",         // >
-        .Inc   => "++*ptr;",        // +
-        .Dec   => "--*ptr;",        // -
-        .From  => "while(*ptr) {",  // [
-        .To    => "}",              // ]
-        .Get   => // ,
-            if (options.method.gcc.libc)
-                "*ptr = getchar();"
-            else if (! options.method.gcc.inlined)
-                "*ptr = intgetchar();"
-            else switch (options.target) {
-                .linux_x86_64 =>
-                    \\asm volatile (
-                    \\  "syscall"
-                    \\  : "=a"(ret)
-                    \\  : "a"(__NR_read), "D"(0), "S"(ptr), "d"(1)
-                    \\  : "memory"
-                    \\);
-                    \\if(ret != 1) *ptr = -1; // -1 == EOF
-                    ,
-                .linux_x86 =>
-                    \\asm volatile (
-                    \\  "int $0x80"
-                    \\  : "=a"(ret)
-                    \\  : "a"(__NR_read), "b"(0), "c"(ptr), "d"(1)
-                    \\  : "memory"
-                    \\);
-                    \\if(ret != 1) *ptr = -1; // -1 == EOF
-                    ,
-                else => unreachable,
-            },
-        .Put   => // .
-            if (options.method.gcc.libc)
-                "putchar(*ptr);"
-            else if (! options.method.gcc.inlined)
-                "intputchar(*ptr);"
-            else switch (options.target) {
-                .linux_x86_64 =>
-                    \\asm volatile (
-                    \\  "syscall"
-                    \\  :
-                    \\  : "a"(__NR_write), "D"(1), "S"(ptr), "d"(1)
-                    \\  : "memory"
-                    \\);
-                    ,
-                .linux_x86 =>
-                    \\asm volatile (
-                    \\  "int $0x80"
-                    \\  :
-                    \\  : "a"(__NR_write), "b"(1), "c"(ptr), "d"(1)
-                    \\  : "memory"
-                    \\);
-                    ,
-                else => unreachable,
-            },
-    };
+    switch (try proc.spawnAndWait()) {
+        .Exited => |e| if (e == 0) return else return error.GccError,
+        else => return error.GccError,
+    }
 }
