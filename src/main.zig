@@ -78,7 +78,7 @@ fn compile (
 ) !void {
     return switch(options.method) {
         .gcc    => using_c.compile(al, tokens, options),
-        .as     => using_as.copmile(al, tokens, options),
+        .as     => using_as.compile(al, tokens, options),
         .llvm   => using_ll.compile(tokens, options),
         .clang  => compile_cl(tokens, options),
     };

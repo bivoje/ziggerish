@@ -12,6 +12,7 @@ pub const BFinstr = enum {
     To,    // ]
     Get,   // ,
     Put,   // .
+    Dump,  // #
 
     pub fn token (c: u8) ?BFinstr {
         return switch (c) {
@@ -23,6 +24,7 @@ pub const BFinstr = enum {
             ']' => BFinstr.To,
             ',' => BFinstr.Get,
             '.' => BFinstr.Put,
+            '#' => BFinstr.Dump,
             else => null,
             // need explicit type due to limitation of the compiler
             // https://stackoverflow.com/a/68424628

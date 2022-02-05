@@ -34,6 +34,14 @@ pub fn compile (
     // the difference is subtle, and negligible.
     // https://stackoverflow.com/a/13584185
 
+    // TODO opt like this?
+    //%7 = lshr i8 %6, 4
+    //%8 = or i8 %7, 48
+    //%9 = icmp ult i8 %8, 58
+    //%10 = select i1 %9, i8 0, i8 7
+    //%11 = add nuw nsw i8 %10, %8
+    //%12 = zext i8 %11 to i32
+    //%13 = call i32 @putchar(i32 %12)
     const asm_routines = switch (options.target) {
         .linux_x86 =>
             \\intputchar:
@@ -52,6 +60,57 @@ pub fn compile (
             \\.Lreadend:
             \\	ret
             \\
+            \\dump:
+            \\	push	%ebp
+            \\	add	$5, %ecx		# dst = ptr+5
+            \\	push	%ecx			# store dst
+            \\	sub	$4, %esp		# (esp)=c, alingn frame
+            \\	lea	buf-1, %esi		# esi = p
+            \\	lea	(%esp), %ecx		# ecx = ptr (=&c)
+            \\
+            \\.Ldumploop:
+            \\	add	$1, %esi
+            \\	mov	4(%esp), %eax
+            \\	cmp	%esi, %eax
+            \\	je	.Ldumpend
+            \\
+            \\	xorl	%edi, %edi
+            \\	movzbl	(%esi), %ebx
+            \\	shrb	$4, %bl
+            \\	addl	$0x30, %ebx
+            \\	cmpb	$0x3A, %bl
+            \\	movl	$7, %eax
+            \\	cmovl	%edi, %eax
+            \\	addl	%eax, %ebx
+            \\	movb	%bl, (%ecx)
+            \\	call	intputchar
+            \\
+            \\	xorl	%edi, %edi
+            \\	movzbl	(%esi), %ebx
+            \\	andl	$0x0F, %ebx
+            \\	addl	$0x30, %ebx
+            \\	cmpb	$0x3A, %bl
+            \\	movl	$7, %eax
+            \\	cmovl	%edi, %eax
+            \\	addl	%eax, %ebx
+            \\	movb	%bl, (%ecx)
+            \\	call	intputchar
+            \\
+            \\	movl	$0x20, (%ecx)
+            \\	call	intputchar
+            \\
+            \\	jmp	.Ldumploop
+            \\
+            \\.Ldumpend:
+            \\	movl	$0x0A, (%ecx)
+            \\	call	intputchar
+            \\
+            \\	add	$4, %esp
+            \\	pop	%ecx
+            \\	sub	$5, %ecx
+            \\	pop	%esi
+            \\	ret
+            \\
             ,
         .linux_x86_64 =>
             \\intputchar:
@@ -68,6 +127,56 @@ pub fn compile (
             \\	je	.Lreadend
             \\	movb	$-1, (%rsi)
             \\.Lreadend:
+            \\	ret
+            \\
+            \\dump:
+            \\	pushq	%rbp
+            \\	addq	$5, %rsi		# dst = ptr+5
+            \\	pushq	%rsi			# store dst
+            \\	subq	$8, %rsp		# (rsp)=c, alingn frame
+            \\	leaq	buf-1(%rip), %rbx	# rbx = p
+            \\	leaq	(%rsp), %rsi		# rsi = ptr (=&c)
+            \\	xorq	%r8, %r8		# r8 = 0 for convenience
+            \\
+            \\.Ldumploop:
+            \\	addq	$1, %rbx
+            \\	movq	8(%rsp), %rax
+            \\	cmpq	%rbx, %rax
+            \\	je	.Ldumpend
+            \\
+            \\	movzbl	(%rbx), %edi
+            \\	shrb	$4, %dil
+            \\	addl	$0x30, %edi
+            \\	cmpb	$0x3A, %dil
+            \\	movl	$7, %eax
+            \\	cmovl	%r8d, %eax
+            \\	addl	%eax, %edi
+            \\	movb	%dil, (%rsi)
+            \\	call	intputchar
+            \\
+            \\	movzbl	(%rbx), %edi
+            \\	andl	$0x0F, %edi
+            \\	addl	$0x30, %edi
+            \\	cmpb	$0x3A, %dil
+            \\	movl	$7, %eax
+            \\	cmovl	%r8d, %eax
+            \\	addl	%eax, %edi
+            \\	movb	%dil, (%rsi)
+            \\	call	intputchar
+            \\
+            \\	movl	$0x20, (%rsi)
+            \\	call	intputchar
+            \\
+            \\	jmp	.Ldumploop
+            \\
+            \\.Ldumpend:
+            \\	movl	$0x0A, (%rsi)
+            \\	call	intputchar
+            \\
+            \\	addq	$8, %rsp
+            \\	popq	%rsi
+            \\	subq	$5, %rsi
+            \\	popq	%rbx
             \\	ret
             \\
             ,
@@ -166,6 +275,7 @@ pub fn compile (
         for (tokens.items) |token, i| {
             try switch (options.target) {
                 .linux_x86_64 => switch (token) {
+                    .Dump  => file.writeAll("\tcall\tdump"),
                     .Left  => file.writeAll("\tsubq\t$1, %rsi"),     // <
                     .Right => file.writeAll("\taddq\t$1, %rsi"),     // >
                     .Inc   => file.writeAll("\taddb\t$1, (%rsi)"),  // +
@@ -192,6 +302,7 @@ pub fn compile (
                     },
                 },
                 .linux_x86 => switch (token) {
+                    .Dump  => file.writeAll("\tcall\tdump"),        // #
                     .Left  => file.writeAll("\tsubl\t$1, %ecx"),     // <
                     .Right => file.writeAll("\taddl\t$1, %ecx"),     // >
                     .Inc   => file.writeAll("\taddb\t$1, (%ecx)"),  // +

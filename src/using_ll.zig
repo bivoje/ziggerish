@@ -33,6 +33,48 @@ pub fn compile (
         \\  %2 = call i64 @write(i32 1, i8* %0, i64 1) #5
         \\  ret void
         \\}
+        \\define internal fastcc void @dump(i8* nocapture %ptr) unnamed_addr #1 {
+        \\entry:
+        \\  %c = alloca i8, align 1
+        \\  %p_base = getelementptr inbounds [1000 x i8], [1000 x i8]* @buf, i64 0, i64 0
+        \\  %p_end = getelementptr inbounds i8, i8* %ptr, i64 5
+        \\
+        \\  %do_nothing = icmp eq i8* %p_base, %p_end
+        \\	br i1 %do_nothing, label %done, label %loop
+        \\
+        \\loop:
+        \\	%p0 = phi i8* [ %p_base, %entry ], [ %p1, %loop ]
+        \\
+        \\	%ca0 = load i8, i8* %p0, align 1
+        \\  %ca1 = lshr i8 %ca0, 4
+        \\  %ca2 = or i8 %ca1, 48
+        \\  %ba = icmp ult i8 %ca2, 58
+        \\  %da = select i1 %ba, i8 0, i8 7
+        \\  %ca3 = add nuw nsw i8 %da, %ca2
+        \\  store i8 %ca3, i8* %c, align 1
+        \\  call void @intputchar(i8* nonnull %c)
+        \\
+        \\  %cb0 = load i8, i8* %p0, align 1
+        \\  %cb1 = and i8 %cb0, 15
+        \\  %cb2 = or i8 %cb1, 48
+        \\  %bb = icmp ult i8 %cb2, 58
+        \\  %db = select i1 %bb, i8 0, i8 7
+        \\  %cb3  = add nuw nsw i8 %cb2, %db
+        \\  store i8 %cb3, i8* %c, align 1
+        \\  call void @intputchar(i8* nonnull %c)
+        \\
+        \\  store i8 32, i8* %c, align 1
+        \\  call void @intputchar(i8* nonnull %c)
+        \\
+        \\  %p1 = getelementptr inbounds i8, i8* %p0, i64 1
+        \\  %finished = icmp eq i8* %p1, %p_end
+        \\  br i1 %finished, label %done, label %loop
+        \\
+        \\done:
+        \\  store i8 10, i8* %c, align 1
+        \\  call void @intputchar(i8* nonnull %c)
+        \\  ret void
+        \\}
         \\define dso_local void @main() local_unnamed_addr #0 {
         \\loop0b0:
         \\  %l0p0 = getelementptr inbounds [1000 x i8], [1000 x i8]* @buf, i64 0, i64 0
@@ -126,6 +168,10 @@ fn translate (
         const token = tokens.items[ti];
         //dprint("tokens[{}]: {}\n", .{ti, token});
         switch (token) {
+            .Dump  => { // #
+                try w.print("  call fastcc void @dump(i8* nonnull %l{}p{})", .{ln,px});
+                try w.print("\t\t;dump", .{});
+            },
             .Left  => { // <
                 try w.print("  %l{}p{} = getelementptr inbounds i8, i8* %l{}p{}, i64 -1", .{ln,px+1, ln,px});
                 try w.print("\t\t;<", .{});

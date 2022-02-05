@@ -79,6 +79,39 @@ pub fn compile (
             ,
         else => unreachable,
     };
+    //var b = switch (options.eof_by) {
+    //    .neg1 =>
+    //        \\  if (ret!=1) *ptr = -1;
+    //        ,
+    //    .noop =>
+    //        \\  // place holder ------
+    //        ,
+    //    .zero =>
+    //        \\  if (ret!=1) *ptr = 0;;
+    //};
+
+    //var getc_body_buf = [_]u8{undefined} ** 160;
+    //const getc_body = try std.fmt.bufPrint(&getc_body_buf, "{s}\n{s}", .{
+    //    //REPORT only selects the first branch whatsoever
+    //    //switch (options.target) {
+    //    //    .linux_x86_64 =>
+    //    //        \\  asm volatile (
+    //    //        \\    "syscall"//
+    //    //        \\    : "=a"(ret)
+    //    //        \\    : "a"(__NR_read), "D"(0), "S"(ptr), "d"(1)
+    //    //        \\    : "memory"
+    //    //        ,
+    //    //    .linux_x86 =>
+    //    //        \\  asm volatile (
+    //    //        \\    "int $0x80"
+    //    //        \\    : "=a"(ret)
+    //    //        \\    : "a"(__NR_read), "b"(0), "c"(ptr), "d"(1)
+    //    //        \\    : "memory"
+    //    //        ,
+    //    //    else => unreachable,
+    //    //},
+    //    a, b
+    //});
 
     const getchar: []const u8 =
         if (gcc.inlined) getc_body
@@ -147,6 +180,27 @@ pub fn compile (
         } // not inlined
     } // not libc
 
+    try w.print(
+        \\void dump(char *p) {{
+        \\ char c;
+        \\ char* ptr = &c;
+        \\ char *dst = p + 5; p = buf-1;
+        \\ while(++p != dst) {{
+        \\  c = ((*p >> 4) & 0x0F) + 0x30;
+        \\  c += c<58? 0: 7;
+        \\{s}
+        \\  c = (*p & 0x0F) + 0x30;
+        \\  c += c<58? 0: 7;
+        \\{s}
+        \\  c = 0x20;
+        \\{s}
+        \\ }}
+        \\ c = 0x0A;
+        \\{s}
+        \\}}
+        \\
+    , .{ putchar, putchar, putchar, putchar});
+
     try w.writeAll(
         \\int main(void) {
         \\  char *ptr = buf;
@@ -162,6 +216,7 @@ pub fn compile (
     // main body
     for (tokens.items) |token| {
         try w.writeAll(switch (token) {
+            .Dump  => "  dump(ptr);",     // #
             .Left  => "  --ptr;",         // <
             .Right => "  ++ptr;",         // >
             .Inc   => "  ++*ptr;",        // +
