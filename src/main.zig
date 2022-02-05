@@ -290,7 +290,7 @@ fn collect_jumprefs(allocator :std.mem.Allocator, instrs: std.ArrayList(BFinstr)
         } // otherwise, just skip it
     }
 
-    if (loc_stack.items.len == 0) return null; // unmatched ']' error
+    if (loc_stack.items.len == 0) return loc_stack; // not a single [/] found
     var top = loc_stack.items.len - 1;
 
     // find top of the unpaired '['
