@@ -79,7 +79,7 @@ fn compile (
     return switch(options.method) {
         .gcc    => using_c.compile(al, tokens, options),
         .as     => using_as.compile(al, tokens, options),
-        .llvm   => using_ll.compile(tokens, options),
+        .ll     => using_ll.compile(tokens, options),
         .clang  => compile_cl(tokens, options),
     };
 }
@@ -252,7 +252,7 @@ fn test_for_ll (
     options: *CompileOptions,
 ) !void {
     _ = al;
-    options.*.method = .{ .llvm = .{
+    options.*.method = .{ .ll = .{
     }};
     dprint("testing ", .{});
     options.dump();

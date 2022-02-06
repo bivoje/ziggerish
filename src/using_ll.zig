@@ -11,13 +11,20 @@ pub fn compile (
     options: CompileOptions,
 ) !void {
 
-    const ll_meta =
+    const ll = options.method.ll;
+
+    var file = try std.fs.cwd().createFile(ll.temp_path_ll, .{ .read = true, });
+    defer file.close();
+    var w = file.writer();
+
+
+    try w.print(
         \\source_filename = "{s}"
         \\target triple = "x86_64-pc-linux-gnu"
         \\
-        ;
+    , .{options.src_path});
 
-    const ll_header =
+    try w.writeAll(
         \\@buf = internal global [1000 x i8] zeroinitializer, align 16
         \\define internal fastcc void @intgetchar(i8* nocapture %0) unnamed_addr #1 {
         \\  %2 = call i64 @read(i32 0, i8* %0, i64 1) #5
@@ -40,12 +47,12 @@ pub fn compile (
         \\  %p_end = getelementptr inbounds i8, i8* %ptr, i64 5
         \\
         \\  %do_nothing = icmp eq i8* %p_base, %p_end
-        \\	br i1 %do_nothing, label %done, label %loop
+        \\  br i1 %do_nothing, label %done, label %loop
         \\
         \\loop:
-        \\	%p0 = phi i8* [ %p_base, %entry ], [ %p1, %loop ]
+        \\  %p0 = phi i8* [ %p_base, %entry ], [ %p1, %loop ]
         \\
-        \\	%ca0 = load i8, i8* %p0, align 1
+        \\  %ca0 = load i8, i8* %p0, align 1
         \\  %ca1 = lshr i8 %ca0, 4
         \\  %ca2 = or i8 %ca1, 48
         \\  %ba = icmp ult i8 %ca2, 58
@@ -79,9 +86,13 @@ pub fn compile (
         \\loop0b0:
         \\  %l0p0 = getelementptr inbounds [1000 x i8], [1000 x i8]* @buf, i64 0, i64 0
         \\
-        ;
+    );
 
-    const ll_footer =
+    const tl = try translate(w, 0, tokens, 0, 1, 0, 0, options);
+    // TODO check more sophisticately
+    try std.testing.expectEqual(tl.@"0", tokens.items.len);
+
+    try w.writeAll(
         \\  br label %mainret
         \\mainret:
         \\  call void @exit(i32 0) #4
@@ -107,31 +118,14 @@ pub fn compile (
         \\!3 = !{!"omnipotent char", !4, i64 0}
         \\!4 = !{!"Simple C/C++ TBAA"}
         \\
-        ;
-
-    var file = try std.fs.cwd().createFile(
-        options.method.llvm.temp_path_ll,
-        .{ .read = true, }
     );
-    defer file.close();
-
-    try file.writer().print(ll_meta, .{options.src_path});
-    try file.writeAll(ll_header);
-
-    var w = file.writer();
-    const tl = try translate(w, 0, tokens, 0, 1, 0, 0, options);
-    try file.writeAll(ll_footer);
-
-    // TODO check more sophisticately
-    try std.testing.expectEqual(tl.@"0", tokens.items.len);
-
 
     const ret_clang = try system(
         "clang",
         &[_:null]?[*:0]const u8{
             "clang",
             "-o", options.dst_path,
-            options.method.llvm.temp_path_ll,
+            ll.temp_path_ll,
             null,
         }, &[_:null]?[*:0]const u8{
             "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",

@@ -62,7 +62,7 @@ pub const CompileOptions = struct {
             temp_path_s: [:0]const u8 = "temp.s",
             temp_path_o: [:0]const u8 = "temp.o",
         },
-        llvm: struct {
+        ll: struct {
             temp_path_ll: [:0]const u8 = "temp.ll",
             temp_path_s: [:0]const u8 = "temp.s",
             temp_path_o: [:0]const u8 = "temp.o",
@@ -264,7 +264,7 @@ fn dump_options(options: CompileOptions) void {
             dprint("{s}", .{
                 ".",
             }),
-        .llvm => |_|
+        .ll => |_|
             dprint("{s}", .{
                 ".",
             }),
