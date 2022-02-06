@@ -13,13 +13,40 @@ pub fn compile (
     options: CompileOptions,
 ) !void {
 
-    const asm_meta = //TODO
+    // FIXME more safe way?
+    const as = options.method.as;
+
+    const meta_info = blk: {
+        const build_os = @import("builtin").os;
+        const os_name = switch (build_os.tag) {
+            .linux => "Linux",
+            else => unreachable,
+        };
+        const os_ver = switch (build_os.tag) {
+            .linux => build_os.version_range.linux.range.min,
+            else => unreachable,
+        };
+        const version = std.builtin.Version {
+            .major = 0, .minor = 0, .patch = 0,
+        };
+        const date = "20220124"; // FIXME how to use pragmatically?
+        break :blk .{ options.src_path, os_name, os_ver, version, date, };
+    };
+
+    var file = try std.fs.cwd().createFile(as.temp_path_s, .{ .read = true, });
+    defer file.close();
+    var w = file.writer();
+
+    try w.print(
         \\	.file	"{s}"
         \\	.ident	"Ziggerish: ({s} {any}) {any} {s}"
         \\
-        ;
+    , meta_info);
 
-    const asm_header =
+    // NOTE gcc would normally generate code using .comm directive
+    // the difference is subtle, and negligible.
+    // https://stackoverflow.com/a/13584185
+    try w.writeAll(
         \\	.section	.note.GNU-stack,"",@progbits
         \\
         \\	.bss
@@ -29,20 +56,9 @@ pub fn compile (
         \\
         \\	.text
         \\
-        ;
-    // NOTE gcc would normally generate code using .comm directive
-    // the difference is subtle, and negligible.
-    // https://stackoverflow.com/a/13584185
+    );
 
-    // TODO opt like this?
-    //%7 = lshr i8 %6, 4
-    //%8 = or i8 %7, 48
-    //%9 = icmp ult i8 %8, 58
-    //%10 = select i1 %9, i8 0, i8 7
-    //%11 = add nuw nsw i8 %10, %8
-    //%12 = zext i8 %11 to i32
-    //%13 = call i32 @putchar(i32 %12)
-    const asm_routines = switch (options.target) {
+    try w.writeAll(switch (options.target) {
         .linux_x86 =>
             \\intputchar:
             \\	movl	$4, %eax
@@ -50,6 +66,20 @@ pub fn compile (
             \\	int	$0x80
             \\	ret
             \\
+            ,
+        .linux_x86_64 =>
+            \\intputchar:
+            \\	movl	$1, %eax
+            \\	movl	%eax, %edi
+            \\	syscall
+            \\	ret
+            \\
+            ,
+        else => unreachable,
+    });
+
+    try w.writeAll(switch (options.target) {
+        .linux_x86 =>
             \\intgetchar:
             \\	movl	$3, %eax
             \\	movl	$0, %ebx
@@ -60,6 +90,24 @@ pub fn compile (
             \\.Lreadend:
             \\	ret
             \\
+            ,
+        .linux_x86_64 =>
+            \\intgetchar:
+            \\	movl	$0, %eax
+            \\	movl	%eax, %edi
+            \\	syscall
+            \\	cmpl	$1, %eax
+            \\	je	.Lreadend
+            \\	movb	$-1, (%rsi)
+            \\.Lreadend:
+            \\	ret
+            \\
+            ,
+        else => unreachable,
+    });
+
+    try w.writeAll(switch (options.target) {
+        .linux_x86 =>
             \\dump:
             \\	push	%ebp
             \\	add	$5, %ecx		# dst = ptr+5
@@ -74,10 +122,10 @@ pub fn compile (
             \\	cmp	%esi, %eax
             \\	je	.Ldumpend
             \\
-            \\	xorl	%edi, %edi
+            \\	xorl	%edi, %edi	# prepare 0 for cmov
             \\	movzbl	(%esi), %ebx
             \\	shrb	$4, %bl
-            \\	addl	$0x30, %ebx
+            \\	orl	$0x30, %ebx	# faster than addl
             \\	cmpb	$0x3A, %bl
             \\	movl	$7, %eax
             \\	cmovl	%edi, %eax
@@ -85,10 +133,10 @@ pub fn compile (
             \\	movb	%bl, (%ecx)
             \\	call	intputchar
             \\
-            \\	xorl	%edi, %edi
+            \\	xorl	%edi, %edi	# prepare 0 for cmov
             \\	movzbl	(%esi), %ebx
             \\	andl	$0x0F, %ebx
-            \\	addl	$0x30, %ebx
+            \\	orl	$0x30, %ebx	# faster than addl
             \\	cmpb	$0x3A, %bl
             \\	movl	$7, %eax
             \\	cmovl	%edi, %eax
@@ -113,22 +161,6 @@ pub fn compile (
             \\
             ,
         .linux_x86_64 =>
-            \\intputchar:
-            \\	movl	$1, %eax
-            \\	movl	%eax, %edi
-            \\	syscall
-            \\	ret
-            \\
-            \\intgetchar:
-            \\	movl	$0, %eax
-            \\	movl	%eax, %edi
-            \\	syscall
-            \\	cmpl	$1, %eax
-            \\	je	.Lreadend
-            \\	movb	$-1, (%rsi)
-            \\.Lreadend:
-            \\	ret
-            \\
             \\dump:
             \\	pushq	%rbp
             \\	addq	$5, %rsi		# dst = ptr+5
@@ -136,7 +168,7 @@ pub fn compile (
             \\	subq	$8, %rsp		# (rsp)=c, alingn frame
             \\	leaq	buf-1(%rip), %rbx	# rbx = p
             \\	leaq	(%rsp), %rsi		# rsi = ptr (=&c)
-            \\	xorq	%r8, %r8		# r8 = 0 for convenience
+            \\	xorq	%r8, %r8		# r8 = 0 for cmov
             \\
             \\.Ldumploop:
             \\	addq	$1, %rbx
@@ -146,7 +178,7 @@ pub fn compile (
             \\
             \\	movzbl	(%rbx), %edi
             \\	shrb	$4, %dil
-            \\	addl	$0x30, %edi
+            \\	orl	$0x30, %edi	# fater than add
             \\	cmpb	$0x3A, %dil
             \\	movl	$7, %eax
             \\	cmovl	%r8d, %eax
@@ -156,7 +188,7 @@ pub fn compile (
             \\
             \\	movzbl	(%rbx), %edi
             \\	andl	$0x0F, %edi
-            \\	addl	$0x30, %edi
+            \\	orl	$0x30, %edi	# faster than add
             \\	cmpb	$0x3A, %dil
             \\	movl	$7, %eax
             \\	cmovl	%r8d, %eax
@@ -181,15 +213,13 @@ pub fn compile (
             \\
             ,
         else => unreachable,
-    };
+    });
 
-    const asm_main_prol = switch (options.target) {
+    try w.writeAll(switch (options.target) {
         .linux_x86 =>
             \\	.globl	_start
             \\_start:
             \\	pushl	%ebp
-            \\	subl	$8, %esp
-            \\
             \\	leal	buf, %ecx
             \\	movl	$1, %edx
             \\
@@ -199,8 +229,6 @@ pub fn compile (
             \\	.globl	_start
             \\_start:
             \\	pushq	%rbp
-            \\	subq	$8, %rsp
-            \\
             \\	leaq	buf(%rip), %rsi
             \\	movl	$1, %edx
             \\
@@ -211,9 +239,81 @@ pub fn compile (
               // given -fno-pie option to gcc would prevent this behavior.
               // https://stackoverflow.com/a/45422495
         else => unreachable,
-    };
+    });
 
-    const asm_footer = switch (options.target) {
+
+    // write body
+    {
+        const jumprefs = (try collect_jumprefs(al, tokens)) orelse {
+            return error.SytaxError;
+        };
+
+        var jri: usize = 0;
+        for (tokens.items) |token, i| {
+            try switch (options.target) {
+                .linux_x86_64 => switch (token) {
+                    .Dump  => w.writeAll("\tcall\tdump"),
+                    .Left  => w.writeAll("\tsubq\t$1, %rsi"),   // <
+                    .Right => w.writeAll("\taddq\t$1, %rsi"),   // >
+                    .Inc   => w.writeAll("\taddb\t$1, (%rsi)"), // +
+                    .Dec   => w.writeAll("\tsubb\t$1, (%rsi)"), // -
+                    .Get   => w.writeAll("\tcall\tintgetchar"), // ,
+                    .Put   => w.writeAll("\tcall\tintputchar"), // .
+                    .From  => blk: { // [
+                        defer jri += 1;
+                        break :blk w.print(
+                        \\.Lleft{d}:
+                        \\	movb	(%rsi), %al
+                        \\	testb	%al, %al
+                        \\	je .Lright{d}
+                        , .{i, jumprefs.items[jri]});
+                    },
+                    .To    => blk: { // ]
+                        defer jri += 1;
+                        break :blk w.print(
+                        \\.Lright{d}:
+                        \\	movb	(%rsi), %al
+                        \\	testb	%al, %al
+                        \\	jne	.Lleft{d}
+                        , .{i, jumprefs.items[jri]});
+                    },
+                },
+                .linux_x86 => switch (token) {
+                    .Dump  => w.writeAll("\tcall\tdump"),       // #
+                    .Left  => w.writeAll("\tsubl\t$1, %ecx"),   // <
+                    .Right => w.writeAll("\taddl\t$1, %ecx"),   // >
+                    .Inc   => w.writeAll("\taddb\t$1, (%ecx)"), // +
+                    .Dec   => w.writeAll("\tsubb\t$1, (%ecx)"), // -
+                    .Get   => w.writeAll("\tcall\tintgetchar"), // ,
+                    .Put   => w.writeAll("\tcall\tintputchar"), // .
+                    .From  => blk: { // [
+                        defer jri += 1;
+                        break :blk w.print(
+                            \\.Lleft{d}:
+                            \\	movb	(%ecx), %al
+                            \\	testb	%al, %al
+                            \\	je .Lright{d}
+                        , .{i, jumprefs.items[jri]});
+                    },
+                    .To    => blk: { // ]
+                        defer jri += 1;
+                        break :blk w.print(
+                            \\.Lright{d}:
+                            \\	movb	(%ecx), %al
+                            \\	testb	%al, %al
+                            \\	jne	.Lleft{d}
+                        , .{i, jumprefs.items[jri]});
+                    },
+                },
+                else => unreachable,
+            };
+
+            try w.writeByte(@as(u8, '\n'));
+        }
+        std.debug.assert(jri == jumprefs.items.len); // FIXME detect first & fail gently?
+    }
+
+    try w.writeAll(switch (options.target) {
         .linux_x86 =>
             \\.Lexit:
             \\	movl	$0, %ebx
@@ -229,114 +329,7 @@ pub fn compile (
             \\
             ,
         else => unreachable,
-    };
-
-
-    // create *.s tempfile
-    {
-        var file = try std.fs.cwd().createFile(
-            options.method.as.temp_path_s,
-            .{ .read = true, }
-        );
-        defer file.close();
-
-        const meta_info = blk: {
-            const build_os = @import("builtin").os;
-
-            const os_name = switch (build_os.tag) {
-                .linux => "Linux",
-                else => unreachable,
-            };
-
-            const os_ver = switch (build_os.tag) {
-                .linux => build_os.version_range.linux.range.min,
-                else => unreachable,
-            };
-
-            const version = std.builtin.Version {
-                .major = 0, .minor = 0, .patch = 0,
-            };
-
-            const date = "20220124"; // FIXME how to use pragmatically?
-
-            break :blk .{ options.src_path, os_name, os_ver, version, date, };
-        };
-
-        try file.writer().print(asm_meta, meta_info);
-        try file.writeAll(asm_header);
-        try file.writeAll(asm_routines);
-        try file.writeAll(asm_main_prol);
-
-        const jumprefs = (try collect_jumprefs(al, tokens)) orelse {
-            return error.SytaxError;
-        };
-
-        var jri: usize = 0;
-        for (tokens.items) |token, i| {
-            try switch (options.target) {
-                .linux_x86_64 => switch (token) {
-                    .Dump  => file.writeAll("\tcall\tdump"),
-                    .Left  => file.writeAll("\tsubq\t$1, %rsi"),     // <
-                    .Right => file.writeAll("\taddq\t$1, %rsi"),     // >
-                    .Inc   => file.writeAll("\taddb\t$1, (%rsi)"),  // +
-                    .Dec   => file.writeAll("\tsubb\t$1, (%rsi)"),  // -
-                    .Get   => file.writeAll("\tcall\tintgetchar"),   // ,
-                    .Put   => file.writeAll("\tcall\tintputchar"),   // .
-                    .From  => blk: { // [
-                        defer jri += 1;
-                        break :blk file.writer().print(
-                        \\.Lleft{d}:
-                        \\	movb	(%rsi), %al
-                        \\	testb	%al, %al
-                        \\	je .Lright{d}
-                        , .{i, jumprefs.items[jri]});
-                    },
-                    .To    => blk: { // ]
-                        defer jri += 1;
-                        break :blk file.writer().print(
-                        \\.Lright{d}:
-                        \\	movb	(%rsi), %al
-                        \\	testb	%al, %al
-                        \\	jne	.Lleft{d}
-                        , .{i, jumprefs.items[jri]});
-                    },
-                },
-                .linux_x86 => switch (token) {
-                    .Dump  => file.writeAll("\tcall\tdump"),        // #
-                    .Left  => file.writeAll("\tsubl\t$1, %ecx"),     // <
-                    .Right => file.writeAll("\taddl\t$1, %ecx"),     // >
-                    .Inc   => file.writeAll("\taddb\t$1, (%ecx)"),  // +
-                    .Dec   => file.writeAll("\tsubb\t$1, (%ecx)"),  // -
-                    .Get   => file.writeAll("\tcall\tintgetchar"),   // ,
-                    .Put   => file.writeAll("\tcall\tintputchar"),   // .
-                    .From  => blk: { // [
-                        defer jri += 1;
-                        break :blk file.writer().print(
-                        \\.Lleft{d}:
-                        \\	movb	(%ecx), %al
-                        \\	testb	%al, %al
-                        \\	je .Lright{d}
-                        , .{i, jumprefs.items[jri]});
-                    },
-                    .To    => blk: { // ]
-                        defer jri += 1;
-                        break :blk file.writer().print(
-                        \\.Lright{d}:
-                        \\	movb	(%ecx), %al
-                        \\	testb	%al, %al
-                        \\	jne	.Lleft{d}
-                        , .{i, jumprefs.items[jri]});
-                    },
-                },
-                else => unreachable,
-            };
-
-            try file.writer().writeByte(0x0a); // newline
-        }
-        std.debug.assert(jri == jumprefs.items.len);
-
-        try file.writeAll(asm_footer);
-    }
+    });
 
     const ret_as = try system(
         "as",
