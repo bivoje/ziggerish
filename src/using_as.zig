@@ -86,9 +86,6 @@ pub fn compile (
             \\	int	$0x80
             \\	cmpl	$1, %eax
             \\	je	.Lreadend
-            \\	movb	$-1, (%ecx)
-            \\.Lreadend:
-            \\	ret
             \\
             ,
         .linux_x86_64 =>
@@ -98,13 +95,29 @@ pub fn compile (
             \\	syscall
             \\	cmpl	$1, %eax
             \\	je	.Lreadend
-            \\	movb	$-1, (%rsi)
-            \\.Lreadend:
-            \\	ret
             \\
             ,
         else => unreachable,
     });
+    try w.writeAll(switch (options.target) {
+        .linux_x86 => switch (options.eof_by) {
+            .neg1 => "\tmovb\t$-1, (%ecx)\n",
+            .noop => "",
+            .zero => "\tmovb\t$0, (%ecx)\n",
+        },
+        .linux_x86_64 => switch (options.eof_by) {
+            .neg1 => "\tmovb\t$-1, (%rsi)\n",
+            .noop => "",
+            .zero => "\tmovb\t$0, (%rsi)\n",
+        },
+        else => unreachable,
+    });
+
+    try w.writeAll(
+        \\.Lreadend:
+        \\	ret
+        \\
+    );
 
     try w.writeAll(switch (options.target) {
         .linux_x86 =>

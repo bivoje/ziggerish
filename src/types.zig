@@ -238,8 +238,9 @@ fn assign_struct_field (
 const dprint = @import("std").debug.print;
 
 fn dump_options(options: CompileOptions) void {
-    dprint("{s}:\t{s} => {s}\t| {s} - ", .{
+    dprint("{s}:{s}\t{s} => {s}\t| {s} - ", .{
         @tagName(options.target),
+        @tagName(options.eof_by),
         options.src_path, options.dst_path,
         @tagName(options.method),
     });

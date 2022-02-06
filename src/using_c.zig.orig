@@ -37,6 +37,7 @@ pub fn compile (
             ,
         else => unreachable,
     };
+<<<<<<< Updated upstream
 
     const putc_body = switch (options.target) {
         .linux_x86_64 =>
@@ -58,7 +59,7 @@ pub fn compile (
         else => unreachable,
     };
 
-    const a = switch (options.target) {
+    const getc_body  = switch (options.target) {
         .linux_x86_64 =>
             \\  asm volatile (
             \\    "syscall"//
@@ -66,6 +67,7 @@ pub fn compile (
             \\    : "a"(__NR_read), "D"(0), "S"(ptr), "d"(1)
             \\    : "memory"
             \\  );
+            \\  if (ret!=1) *ptr = -1;
             ,
         .linux_x86 =>
             \\  asm volatile (
@@ -74,52 +76,47 @@ pub fn compile (
             \\    : "a"(__NR_read), "b"(0), "c"(ptr), "d"(1)
             \\    : "memory"
             \\  );
+            \\  if (ret!=1) *ptr = -1;
             ,
         else => unreachable,
     };
-    var b = switch (options.eof_by) {
-        .neg1 => "  if (ret!=1) *ptr = -1;",
-        .noop => "  // place holder ------",
-        .zero => "  if (ret!=1) *ptr = 0;;",
-    };
+    //var b = switch (options.eof_by) {
+    //    .neg1 =>
+    //        \\  if (ret!=1) *ptr = -1;
+    //        ,
+    //    .noop =>
+    //        \\  // place holder ------
+    //        ,
+    //    .zero =>
+    //        \\  if (ret!=1) *ptr = 0;;
+    //};
 
-    var getc_body_buf = [_]u8{undefined} ** 200;
-    const getc_body: []const u8 = try std.fmt.bufPrint(&getc_body_buf, "{s}\n{s}", .{
-        //REPORT only selects the first branch whatsoever
-        //switch (options.target) {
-        //    .linux_x86_64 =>
-        //        \\  asm volatile (
-        //        \\    "syscall"//
-        //        \\    : "=a"(ret)
-        //        \\    : "a"(__NR_read), "D"(0), "S"(ptr), "d"(1)
-        //        \\    : "memory"
-        //        ,
-        //    .linux_x86 =>
-        //        \\  asm volatile (
-        //        \\    "int $0x80"
-        //        \\    : "=a"(ret)
-        //        \\    : "a"(__NR_read), "b"(0), "c"(ptr), "d"(1)
-        //        \\    : "memory"
-        //        ,
-        //    else => unreachable,
-        //},
-        a, b
-    });
+    //var getc_body_buf = [_]u8{undefined} ** 160;
+    //const getc_body = try std.fmt.bufPrint(&getc_body_buf, "{s}\n{s}", .{
+    //    //REPORT only selects the first branch whatsoever
+    //    //switch (options.target) {
+    //    //    .linux_x86_64 =>
+    //    //        \\  asm volatile (
+    //    //        \\    "syscall"//
+    //    //        \\    : "=a"(ret)
+    //    //        \\    : "a"(__NR_read), "D"(0), "S"(ptr), "d"(1)
+    //    //        \\    : "memory"
+    //    //        ,
+    //    //    .linux_x86 =>
+    //    //        \\  asm volatile (
+    //    //        \\    "int $0x80"
+    //    //        \\    : "=a"(ret)
+    //    //        \\    : "a"(__NR_read), "b"(0), "c"(ptr), "d"(1)
+    //    //        \\    : "memory"
+    //    //        ,
+    //    //    else => unreachable,
+    //    //},
+    //    a, b
+    //});
 
     const getchar: []const u8 =
         if (gcc.inlined) getc_body
-        else if (gcc.libc)
-            switch (options.eof_by) {
-                .neg1 => "  *ptr = getchar();",
-                .noop =>
-                    \\  ret = getchar();
-                    \\  *ptr = ret==-1? *ptr: ret;
-                    ,
-                .zero =>
-                    \\  ret = getchar();
-                    \\  *ptr = ret==-1? 0: ret;
-                    ,
-            }
+        else if (gcc.libc) "  *ptr = getchar();"
         else "  intgetchar(ptr);";
 
     const putchar: []const u8 =
@@ -127,6 +124,84 @@ pub fn compile (
         else if (gcc.libc) "  putchar(*ptr);"
         else "  intputchar(ptr);";
 
+=======
+
+    const putc_body = switch (options.target) {
+        .linux_x86_64 =>
+            \\  asm volatile (
+            \\    "syscall"
+            \\    :
+            \\    : "a"(__NR_write), "D"(1), "S"(ptr), "d"(1)
+            \\    : "memory"
+            \\  );
+            ,
+        .linux_x86 =>
+            \\  asm volatile (
+            \\    "int $0x80"
+            \\    :
+            \\    : "a"(__NR_write), "b"(1), "c"(ptr), "d"(1)
+            \\    : "memory"
+            \\  );
+            ,
+        else => unreachable,
+    };
+
+    const getc_body  = switch (options.target) {
+        .linux_x86_64 =>
+            \\  asm volatile (
+            \\    "syscall"//
+            \\    : "=a"(ret)
+            \\    : "a"(__NR_read), "D"(0), "S"(ptr), "d"(1)
+            \\    : "memory"
+            \\  );
+            \\  if (ret!=1) *ptr = -1;
+            ,
+        .linux_x86 =>
+            \\  asm volatile (
+            \\    "int $0x80"
+            \\    : "=a"(ret)
+            \\    : "a"(__NR_read), "b"(0), "c"(ptr), "d"(1)
+            \\    : "memory"
+            \\  );
+            \\  if (ret!=1) *ptr = -1;
+            ,
+        else => unreachable,
+    };
+    //var b = switch (options.eof_by) {
+    //    .neg1 =>
+    //        \\  if (ret!=1) *ptr = -1;
+    //        ,
+    //    .noop =>
+    //        \\  // place holder ------
+    //        ,
+    //    .zero => 
+    //        \\  if (ret!=1) *ptr = 0;;
+    //};
+
+    //var getc_body_buf = [_]u8{undefined} ** 160;
+    //const getc_body = try std.fmt.bufPrint(&getc_body_buf, "{s}\n{s}", .{
+    //    //REPORT only selects the first branch whatsoever
+    //    //switch (options.target) {
+    //    //    .linux_x86_64 =>
+    //    //        \\  asm volatile (
+    //    //        \\    "syscall"//
+    //    //        \\    : "=a"(ret)
+    //    //        \\    : "a"(__NR_read), "D"(0), "S"(ptr), "d"(1)
+    //    //        \\    : "memory"
+    //    //        ,
+    //    //    .linux_x86 =>
+    //    //        \\  asm volatile (
+    //    //        \\    "int $0x80"
+    //    //        \\    : "=a"(ret)
+    //    //        \\    : "a"(__NR_read), "b"(0), "c"(ptr), "d"(1)
+    //    //        \\    : "memory"
+    //    //        ,
+    //    //    else => unreachable,
+    //    //},
+    //    a, b
+    //});
+
+>>>>>>> Stashed changes
     var file = try std.fs.cwd().createFile(gcc.temp_path, .{ .read = true, });
     defer file.close();
     var w = file.writer();
@@ -168,6 +243,7 @@ pub fn compile (
 
             try w.writeAll(
                 \\
+<<<<<<< Updated upstream
                 \\}
                 \\
                 \\void intexit() {
@@ -205,6 +281,24 @@ pub fn compile (
         \\
     , .{ putchar, putchar, putchar, putchar});
 
+=======
+                \\}
+                \\
+                \\void intexit() {
+                \\
+            );
+
+            try w.writeAll(exit_body);
+
+            try w.writeAll(
+                \\
+                \\}
+                \\
+            );
+        } // not inlined
+    } // not libc
+
+>>>>>>> Stashed changes
     try w.writeAll(
         \\int main(void) {
         \\  char *ptr = buf;
@@ -216,13 +310,7 @@ pub fn compile (
             \\  int ret; // used to store return value of read syscall
             \\
         );
-
-    if (gcc.libc and options.eof_by != .neg1)
-        try w.writeAll(
-            \\  int ret; // temporary store of getchar result
-            \\
-        );
-
+<<<<<<< Updated upstream
 
     // main body
     for (tokens.items) |token| {
@@ -235,11 +323,47 @@ pub fn compile (
             .From  => "  while(*ptr) {",  // [
             .To    => "  }",              // ]
             .Get   => getchar,            // ,
+                // REPORT need explicit casting to invoke proper peer resol
             .Put   => putchar,            // .
         });
 
         try w.writeAll("\n");
     }
+=======
+
+    // main body
+    for (tokens.items) |token| {
+        try w.writeAll(switch (token) {
+            .Left  => "  --ptr;",         // <
+            .Right => "  ++ptr;",         // >
+            .Inc   => "  ++*ptr;",        // +
+            .Dec   => "  --*ptr;",        // -
+            .From  => "  while(*ptr) {",  // [
+            .To    => "  }",              // ]
+            .Get   => @as([]const u8, // ,
+                if (gcc.inlined) getc_body
+                else if (gcc.libc) "  *ptr = getchar();"
+                else "  intgetchar(ptr);"),
+                // REPORT need explicit casting to invoke proper peer resol
+            .Put   => // .
+                if (gcc.inlined) putc_body
+                else if (gcc.libc) "  putchar(*ptr);"
+                else "  intputchar(ptr);",
+            //.Dump  => // #
+        });
+
+        try w.writeAll("\n");
+    }
+
+    try w.writeAll(
+        if (gcc.inlined) exit_body
+        else if (gcc.libc) "  exit(0);"
+        else "  intexit();",
+    );
+
+
+    try w.writeAll("\n}\n");
+>>>>>>> Stashed changes
 
     try w.writeAll(
         if (gcc.inlined) exit_body

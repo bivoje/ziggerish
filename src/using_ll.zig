@@ -31,7 +31,16 @@ pub fn compile (
         \\  %3 = icmp eq i64 %2, 1
         \\  br i1 %3, label %readret, label %readeof
         \\readeof:
-        \\  store i8 -1, i8* %0, align 1, !tbaa !2
+        \\
+    );
+
+    try w.writeAll(switch (options.eof_by) {
+        .neg1 => "  store i8 -1, i8* %0, align 1\n",
+        .noop => "",
+        .zero => "  store i8 0, i8* %0, align 1\n",
+    });
+
+    try w.writeAll(
         \\  br label %readret
         \\readret:
         \\  ret void

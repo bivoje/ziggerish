@@ -121,19 +121,35 @@ test "argparse" {
     try std.testing.expect(std.mem.eql(u8, ret.method.gcc.temp_path, "temp.c"));
 }
 
-const integrated_tests = blk: {
+const TestPair = struct {
+    @"0": [:0]const u8,
+    @"1": fn () anyerror!void,
+};
+
+const neg1_integrated_tests = blk: {
     // REPORT this makes the array to have same entry for all element
     //const TestPair = @TypeOf(.{ .@"0"="samples/hello.bf", .@"1"=integrated_test_hello, });
     // REPORT there's no way to express tuple type...
-    const TestPair = struct {
-        @"0": [:0]const u8,
-        @"1": @TypeOf(integrated_test_hello),
-    };
     break :blk [_]TestPair {
-        .{ .@"0"="samples/hello.bf", .@"1"=integrated_test_hello, },
-        .{ .@"0"="samples/rot13.bf", .@"1"=integrated_test_rot13, },
+        .{ .@"0"="samples/hello.bf",      .@"1"=integrated_test_hello, },
+        .{ .@"0"="samples/neg1/rot13.bf", .@"1"=integrated_test_rot13, },
+        .{ .@"0"="samples/dumptest.bf",   .@"1"=integrated_test_dumptest(.neg1).ffff, },
     };
 };
+
+const noop_integrated_tests = blk: {
+    break :blk [_]TestPair {
+        .{ .@"0"="samples/dumptest.bf",   .@"1"=integrated_test_dumptest(.noop).ffff, },
+    };
+};
+
+const zero_integrated_tests = blk: {
+    break :blk [_]TestPair {
+        .{ .@"0"="samples/dumptest.bf",   .@"1"=integrated_test_dumptest(.zero).ffff, },
+    };
+};
+
+var integrated_tests: []const TestPair = &neg1_integrated_tests;
 
 test "integrated" {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
@@ -142,20 +158,30 @@ test "integrated" {
     const allocator = arena.allocator();
 
     dprint("\n", .{});
-    for (integrated_tests) |_,i| {
-        try test_for_all_options(allocator, i);
+    integrated_tests = &neg1_integrated_tests;
+    for (neg1_integrated_tests) |_,i| {
+        try test_for_all_options(allocator, .neg1, i);
+    }
+    integrated_tests = &noop_integrated_tests;
+    for (noop_integrated_tests) |_,i| {
+        try test_for_all_options(allocator, .noop, i);
+    }
+    integrated_tests = &zero_integrated_tests;
+    for (zero_integrated_tests) |_,i| {
+        try test_for_all_options(allocator, .zero, i);
     }
 }
 
 fn test_for_all_options (
     al: std.mem.Allocator,
+    eof_by: CompileOptions.EofBy,
     i: usize,
 ) !void {
     const tokens = try load_and_parse(al, integrated_tests[i].@"0");
 
     var options = CompileOptions {
         .target = .linux_x86, // .linux_x86_64,
-        .eof_by = .noop, // .zero TODO
+        .eof_by = eof_by,
         .src_path = integrated_tests[i].@"0",
         .dst_path = "main",
         .method = .{ .gcc = .{
@@ -286,4 +312,60 @@ fn integrated_test_rot13 () !void {
 
     // REPORT this is a bug in zig, you can't just use '0'
     try std.testing.expectEqual(@as(u32, 0), ret.status);
+}
+
+fn integrated_test_dumptest (comptime eof_by: CompileOptions.EofBy) type {
+    return struct {
+    fn ffff() !void {
+    const out = switch (eof_by) {
+        .noop =>
+            \\00 00 00 00 00 
+            \\61 62 63 00 00 00 00 
+            \\61 62 63 00 00 00 00 
+            \\cba61 62 63 00 00 
+            \\
+            ,
+        .neg1 =>
+            \\00 00 00 00 00 
+            \\61 62 63 00 00 00 00 
+            \\61 FF 63 00 00 00 00 
+            \\
+            ++"c\xffa61 FF 63 00 00 \n"
+            ,
+        .zero =>
+            \\00 00 00 00 00 
+            \\61 62 63 00 00 00 00 
+            \\61 00 63 00 00 00 00 
+            \\
+            ++ "c\x00a61 00 63 00 00 \n"
+    };
+
+    const ret1 = try system(
+        "/bin/bash",
+        &[_:null]?[*:0]const u8{
+            "/bin/bash",
+            "-c", "echo -n 'abc' | ./main > out1",
+            null,
+        }, &[_:null]?[*:0]const u8{null}
+    );
+    // REPORT this is a bug in zig, you can't just use '0'
+    try std.testing.expectEqual(@as(u32, 0), ret1.status);
+
+    var file = try std.fs.cwd().createFile("out2", .{ .read = true, });
+    try file.writeAll(out);
+    file.close();
+
+    const ret2 = try system(
+        "/bin/bash",
+        &[_:null]?[*:0]const u8{
+            "/bin/bash",
+            "-c", "diff out1 out2",
+            null,
+        }, &[_:null]?[*:0]const u8{null}
+    );
+
+    // REPORT this is a bug in zig, you can't just use '0'
+    try std.testing.expectEqual(@as(u32, 0), ret2.status);
+    } // func
+    }; // struct
 }
