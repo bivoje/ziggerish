@@ -131,15 +131,17 @@ const neg1_integrated_tests = blk: {
     //const TestPair = @TypeOf(.{ .@"0"="samples/hello.bf", .@"1"=integrated_test_hello, });
     // REPORT there's no way to express tuple type...
     break :blk [_]TestPair {
+        .{ .@"0"="samples/dumptest.bf",   .@"1"=integrated_test_dumptest(.neg1).ffff, },
         .{ .@"0"="samples/hello.bf",      .@"1"=integrated_test_hello, },
         .{ .@"0"="samples/neg1/rot13.bf", .@"1"=integrated_test_rot13, },
-        .{ .@"0"="samples/dumptest.bf",   .@"1"=integrated_test_dumptest(.neg1).ffff, },
     };
 };
 
 const noop_integrated_tests = blk: {
     break :blk [_]TestPair {
         .{ .@"0"="samples/dumptest.bf",   .@"1"=integrated_test_dumptest(.noop).ffff, },
+        .{ .@"0"="samples/noop/rev.bf",   .@"1"=integrated_test_rev, },
+        .{ .@"0"="samples/noop/revarr.bf",.@"1"=integrated_test_rev, },
     };
 };
 
@@ -368,4 +370,29 @@ fn integrated_test_dumptest (comptime eof_by: CompileOptions.EofBy) type {
     try std.testing.expectEqual(@as(u32, 0), ret2.status);
     } // func
     }; // struct
+}
+
+fn integrated_test_rev () !void {
+    const input = "abcdefghijklmnopqrstuvwxyz";
+    const ouput = "zyxwvutsrqponmlkjihgfedcba";
+    const ret1 = try system(
+        "/bin/bash",
+        &[_:null]?[*:0]const u8{
+            "/bin/bash",
+            "-c", "[ \"`echo -n '" ++ input ++ "' | ./main | ./main`\" == '" ++ input ++  "' ]",
+            null,
+        }, &[_:null]?[*:0]const u8{null}
+    );
+    // REPORT this is a bug in zig, you can't just use '0'
+    try std.testing.expectEqual(@as(u32, 0), ret1.status);
+    const ret = try system(
+        "/bin/bash",
+        &[_:null]?[*:0]const u8{
+            "/bin/bash",
+            "-c", "[ \"`echo -n '" ++ input ++ "' | ./main`\" == '" ++ ouput ++  "' ]",
+            null,
+        }, &[_:null]?[*:0]const u8{null}
+    );
+    // REPORT this is a bug in zig, you can't just use '0'
+    try std.testing.expectEqual(@as(u32, 0), ret.status);
 }
