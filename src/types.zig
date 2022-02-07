@@ -248,18 +248,17 @@ fn dump_options(options: CompileOptions) void {
     const none: [:0] const u8 = " ";
 
     _ = switch (options.method) {
-        .gcc => |opts| {
+        .gcc => |opts| blk: {
             // REPORT it does not even work...
             const a = (if (!opts.libc) none else "libc");
             const b = (if (!opts.inlined) none else "inlined");
-            dprint("{s} {s}", .{
+            break :blk dprint("{s} {s}", .{
                 // REPORT, peer coercing does not happen between if branches
                 // strictly coerced into the type of 'then' branch
                 //if (opts.libc) "libc" else "",
                 //if (opts.inlined) "inlined" else "",
                 a, b
             });
-            return;
         },
         .as => |_|
             dprint("{s}", .{

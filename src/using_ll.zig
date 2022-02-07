@@ -24,15 +24,15 @@ pub fn compile (
         \\
     , .{options.src_path});
 
-    try w.writeAll(
-        \\@buf = internal global [1000 x i8] zeroinitializer, align 16
-        \\define internal fastcc void @intgetchar(i8* nocapture %0) unnamed_addr #1 {
+    try w.print(
+        \\@buf = internal global [{d} x i8] zeroinitializer, align 16
+        \\define internal fastcc void @intgetchar(i8* nocapture %0) unnamed_addr #1 {{
         \\  %2 = call i64 @read(i32 0, i8* %0, i64 1) #5
         \\  %3 = icmp eq i64 %2, 1
         \\  br i1 %3, label %readret, label %readeof
         \\readeof:
         \\
-    );
+    , .{ options.mem_size });
 
     try w.writeAll(switch (options.eof_by) {
         .neg1 => "  store i8 -1, i8* %0, align 1\n",
@@ -40,19 +40,19 @@ pub fn compile (
         .zero => "  store i8 0, i8* %0, align 1\n",
     });
 
-    try w.writeAll(
+    try w.print(
         \\  br label %readret
         \\readret:
         \\  ret void
-        \\}
-        \\define internal fastcc void @intputchar(i8* nocapture readonly %0) unnamed_addr #1 {
+        \\}}
+        \\define internal fastcc void @intputchar(i8* nocapture readonly %0) unnamed_addr #1 {{
         \\  %2 = call i64 @write(i32 1, i8* %0, i64 1) #5
         \\  ret void
-        \\}
-        \\define internal fastcc void @dump(i8* nocapture %ptr) unnamed_addr #1 {
+        \\}}
+        \\define internal fastcc void @dump(i8* nocapture %ptr) unnamed_addr #1 {{
         \\entry:
         \\  %c = alloca i8, align 1
-        \\  %p_base = getelementptr inbounds [1000 x i8], [1000 x i8]* @buf, i64 0, i64 0
+        \\  %p_base = getelementptr inbounds [{d} x i8], [{d} x i8]* @buf, i64 0, i64 0
         \\  %p_end = getelementptr inbounds i8, i8* %ptr, i64 5
         \\
         \\  %do_nothing = icmp eq i8* %p_base, %p_end
@@ -90,12 +90,12 @@ pub fn compile (
         \\  store i8 10, i8* %c, align 1
         \\  call void @intputchar(i8* nonnull %c)
         \\  ret void
-        \\}
-        \\define dso_local void @main() local_unnamed_addr #0 {
+        \\}}
+        \\define dso_local void @main() local_unnamed_addr #0 {{
         \\loop0b0:
-        \\  %l0p0 = getelementptr inbounds [1000 x i8], [1000 x i8]* @buf, i64 0, i64 0
+        \\  %l0p0 = getelementptr inbounds [{d} x i8], [{d} x i8]* @buf, i64 0, i64 0
         \\
-    );
+    , .{ options.mem_size, options.mem_size, options.mem_size, options.mem_size });
 
     const tl = try translate(w, 0, tokens, 0, 1, 0, 0, options);
     // TODO check more sophisticately

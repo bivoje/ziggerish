@@ -46,17 +46,17 @@ pub fn compile (
     // NOTE gcc would normally generate code using .comm directive
     // the difference is subtle, and negligible.
     // https://stackoverflow.com/a/13584185
-    try w.writeAll(
+    try w.print(
         \\	.section	.note.GNU-stack,"",@progbits
         \\
         \\	.bss
         \\	.align 32
         \\buf:
-        \\	.zero	1000
+        \\	.zero	{d}
         \\
         \\	.text
         \\
-    );
+    , .{ options.mem_size });
 
     try w.writeAll(switch (options.target) {
         .linux_x86 =>

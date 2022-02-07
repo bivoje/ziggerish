@@ -131,10 +131,10 @@ pub fn compile (
     defer file.close();
     var w = file.writer();
 
-    try w.writeAll(
-        \\char buf[1000];
+    try w.print(
+        \\char buf[{d}];
         \\
-    );
+    , .{ options.mem_size });
 
     if (gcc.libc) {
         try w.writeAll(

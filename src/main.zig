@@ -160,23 +160,36 @@ test "integrated" {
     const allocator = arena.allocator();
 
     dprint("\n", .{});
+
+    integrated_tests = & [_]TestPair {
+        .{ .@"0"="samples/noop/rev.bf",   .@"1"=integrated_test_rev_big, },
+    };
+    blk: {
+        // TODO more sophisticated testing?
+        test_for_all_options(allocator, .zero, 50, 0) catch break :blk;
+        return error.NoError;
+    }
+
+    try test_for_all_options(allocator, .zero, 26*1001, 0);
+
     integrated_tests = &neg1_integrated_tests;
     for (neg1_integrated_tests) |_,i| {
-        try test_for_all_options(allocator, .neg1, i);
+        try test_for_all_options(allocator, .neg1, 50, i);
     }
     integrated_tests = &noop_integrated_tests;
     for (noop_integrated_tests) |_,i| {
-        try test_for_all_options(allocator, .noop, i);
+        try test_for_all_options(allocator, .noop, 50, i);
     }
     integrated_tests = &zero_integrated_tests;
     for (zero_integrated_tests) |_,i| {
-        try test_for_all_options(allocator, .zero, i);
+        try test_for_all_options(allocator, .zero, 50, i);
     }
 }
 
 fn test_for_all_options (
     al: std.mem.Allocator,
     eof_by: CompileOptions.EofBy,
+    mem_size: usize,
     i: usize,
 ) !void {
     const tokens = try load_and_parse(al, integrated_tests[i].@"0");
@@ -184,6 +197,7 @@ fn test_for_all_options (
     var options = CompileOptions {
         .target = .linux_x86, // .linux_x86_64,
         .eof_by = eof_by,
+        .mem_size = mem_size,
         .src_path = integrated_tests[i].@"0",
         .dst_path = "main",
         .method = .{ .gcc = .{
@@ -375,6 +389,33 @@ fn integrated_test_dumptest (comptime eof_by: CompileOptions.EofBy) type {
 fn integrated_test_rev () !void {
     const input = "abcdefghijklmnopqrstuvwxyz";
     const ouput = "zyxwvutsrqponmlkjihgfedcba";
+    const ret1 = try system(
+        "/bin/bash",
+        &[_:null]?[*:0]const u8{
+            "/bin/bash",
+            "-c", "[ \"`echo -n '" ++ input ++ "' | ./main | ./main`\" == '" ++ input ++  "' ]",
+            null,
+        }, &[_:null]?[*:0]const u8{null}
+    );
+    // REPORT this is a bug in zig, you can't just use '0'
+    try std.testing.expectEqual(@as(u32, 0), ret1.status);
+    const ret = try system(
+        "/bin/bash",
+        &[_:null]?[*:0]const u8{
+            "/bin/bash",
+            "-c", "[ \"`echo -n '" ++ input ++ "' | ./main`\" == '" ++ ouput ++  "' ]",
+            null,
+        }, &[_:null]?[*:0]const u8{null}
+    );
+    // REPORT this is a bug in zig, you can't just use '0'
+    try std.testing.expectEqual(@as(u32, 0), ret.status);
+}
+
+fn integrated_test_rev_big () !void {
+
+    const input = "abcdefghijklmnopqrstuvwxyz" ** 1000;
+    const ouput = "zyxwvutsrqponmlkjihgfedcba" ** 1000;
+
     const ret1 = try system(
         "/bin/bash",
         &[_:null]?[*:0]const u8{
