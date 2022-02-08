@@ -103,7 +103,7 @@ test "argparse" {
     var argv = [_][*:0]const u8 {
         "ziggerish",
         "samples/hello.bf", ":",
-        "?target=linux_x86", "?mem_size=200", "+verbose", "?warning=false", ":",
+        "?target=linux_x86", "?alloc=200", "+verbose", "?warning=false", ":",
         "gcc", "+inlined", "-libc", "?temp_path=temp.c", ":",
         "hello",
     };
@@ -113,7 +113,7 @@ test "argparse" {
     try std.testing.expect(std.mem.eql(u8, ret.src_path, "samples/hello.bf"));
     try std.testing.expect(std.mem.eql(u8, ret.dst_path, "hello"));
     try std.testing.expectEqual(ret.target, .linux_x86);
-    try std.testing.expectEqual(ret.mem_size, 200);
+    try std.testing.expectEqual(ret.alloc, .{.Static = 200});
     try std.testing.expectEqual(ret.verbose, true);
     try std.testing.expectEqual(ret.warning, false);
     try std.testing.expectEqual(ret.method.gcc.inlined, true);
@@ -166,30 +166,51 @@ test "integrated" {
     };
     blk: {
         // TODO more sophisticated testing?
-        test_for_all_options(allocator, .zero, 50, 0) catch break :blk;
+        test_for_all_options(allocator, .zero, .{.StaticUnchecked=50}, 0) catch break :blk;
         return error.NoError;
     }
 
-    try test_for_all_options(allocator, .zero, 26*1001, 0);
+    try test_for_all_options(allocator, .zero, .{.Static=26*1000+2}, 0); // FIXME WHY add 2?
+    //try test_for_all_options(allocator, .zero, .{.Dynamic={}}, 0);
 
+    blk: {
+        test_for_all_options(allocator, .zero, .{.Static=26*1000-1}, 0) catch break :blk;
+        return error.NoError;
+    }
+
+    var memsz: CompileOptions.Alloc = .{ .Static=50 };
     integrated_tests = &neg1_integrated_tests;
     for (neg1_integrated_tests) |_,i| {
-        try test_for_all_options(allocator, .neg1, 50, i);
+        try test_for_all_options(allocator, .neg1, memsz, i);
     }
     integrated_tests = &noop_integrated_tests;
     for (noop_integrated_tests) |_,i| {
-        try test_for_all_options(allocator, .noop, 50, i);
+        try test_for_all_options(allocator, .noop, memsz, i);
     }
     integrated_tests = &zero_integrated_tests;
     for (zero_integrated_tests) |_,i| {
-        try test_for_all_options(allocator, .zero, 50, i);
+        try test_for_all_options(allocator, .zero, memsz, i);
+    }
+
+    memsz = .{ .Dynamic={} };
+    integrated_tests = &neg1_integrated_tests;
+    for (neg1_integrated_tests) |_,i| {
+        try test_for_all_options(allocator, .neg1, memsz, i);
+    }
+    integrated_tests = &noop_integrated_tests;
+    for (noop_integrated_tests) |_,i| {
+        try test_for_all_options(allocator, .noop, memsz, i);
+    }
+    integrated_tests = &zero_integrated_tests;
+    for (zero_integrated_tests) |_,i| {
+        try test_for_all_options(allocator, .zero, memsz, i);
     }
 }
 
 fn test_for_all_options (
     al: std.mem.Allocator,
     eof_by: CompileOptions.EofBy,
-    mem_size: usize,
+    alloc: CompileOptions.Alloc,
     i: usize,
 ) !void {
     const tokens = try load_and_parse(al, integrated_tests[i].@"0");
@@ -197,7 +218,7 @@ fn test_for_all_options (
     var options = CompileOptions {
         .target = .linux_x86, // .linux_x86_64,
         .eof_by = eof_by,
-        .mem_size = mem_size,
+        .alloc = alloc,
         .src_path = integrated_tests[i].@"0",
         .dst_path = "main",
         .method = .{ .gcc = .{
@@ -335,25 +356,25 @@ fn integrated_test_dumptest (comptime eof_by: CompileOptions.EofBy) type {
     fn ffff() !void {
     const out = switch (eof_by) {
         .noop =>
-            \\00 00 00 00 00 
-            \\61 62 63 00 00 00 00 
-            \\61 62 63 00 00 00 00 
-            \\cba61 62 63 00 00 
+            \\00 
+            \\61 62 63 
+            \\61 62 63 
+            \\cba61 
             \\
             ,
         .neg1 =>
-            \\00 00 00 00 00 
-            \\61 62 63 00 00 00 00 
-            \\61 FF 63 00 00 00 00 
+            \\00 
+            \\61 62 63 
+            \\61 FF 63 
             \\
-            ++"c\xffa61 FF 63 00 00 \n"
+            ++"c\xffa61 \n"
             ,
         .zero =>
-            \\00 00 00 00 00 
-            \\61 62 63 00 00 00 00 
-            \\61 00 63 00 00 00 00 
+            \\00 
+            \\61 62 63 
+            \\61 00 63 
             \\
-            ++ "c\x00a61 00 63 00 00 \n"
+            ++ "c\x00a61 \n"
     };
 
     const ret1 = try system(

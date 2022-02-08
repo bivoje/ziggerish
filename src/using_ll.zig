@@ -13,10 +13,16 @@ pub fn compile (
 
     const ll = options.method.ll;
 
+    const alloc = switch (options.alloc) {
+        .StaticUnchecked, .Static => |size| size,
+        // TODO emit warning, buffer safety check is not supported for llvm compile
+        .Dynamic => 30000, // barely passes unit test
+        // TODO emit warning, dynamic allocation is not supported for llvm compile
+    };
+
     var file = try std.fs.cwd().createFile(ll.temp_path_ll, .{ .read = true, });
     defer file.close();
     var w = file.writer();
-
 
     try w.print(
         \\source_filename = "{s}"
@@ -32,7 +38,7 @@ pub fn compile (
         \\  br i1 %3, label %readret, label %readeof
         \\readeof:
         \\
-    , .{ options.mem_size });
+    , .{ alloc });
 
     try w.writeAll(switch (options.eof_by) {
         .neg1 => "  store i8 -1, i8* %0, align 1\n",
@@ -53,7 +59,7 @@ pub fn compile (
         \\entry:
         \\  %c = alloca i8, align 1
         \\  %p_base = getelementptr inbounds [{d} x i8], [{d} x i8]* @buf, i64 0, i64 0
-        \\  %p_end = getelementptr inbounds i8, i8* %ptr, i64 5
+        \\  %p_end = getelementptr inbounds i8, i8* %ptr, i64 1
         \\
         \\  %do_nothing = icmp eq i8* %p_base, %p_end
         \\  br i1 %do_nothing, label %done, label %loop
@@ -95,7 +101,7 @@ pub fn compile (
         \\loop0b0:
         \\  %l0p0 = getelementptr inbounds [{d} x i8], [{d} x i8]* @buf, i64 0, i64 0
         \\
-    , .{ options.mem_size, options.mem_size, options.mem_size, options.mem_size });
+    , .{ alloc, alloc, alloc, alloc });
 
     const tl = try translate(w, 0, tokens, 0, 1, 0, 0, options);
     // TODO check more sophisticately

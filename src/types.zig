@@ -1,6 +1,10 @@
 const std = @import("std");
 const C = @cImport({
     @cInclude("stdlib.h");
+    // can't resolve location of errno
+    //   error: unable to evaluate constant expression
+    //     pub const errno = __errno_location().*;
+    //@cInclude("errno.h");
 });
 
 pub const BFinstr = enum {
@@ -36,10 +40,10 @@ pub const CompileOptions = struct {
     src_path: [:0]const u8 = "-", // default to stdin
     dst_path: [:0]const u8 = "-", // default to stdout
 
-    mem_size: usize = 100,
     verbose: bool = false,
     warning: bool = true,
 
+    alloc: Alloc,
     eof_by: EofBy,
     target: Target,
     method : CompileUsing,
@@ -50,6 +54,12 @@ pub const CompileOptions = struct {
 
     pub const EofBy = enum {
         neg1, noop, zero,
+    };
+
+    pub const Alloc = union(enum) {
+        StaticUnchecked: usize,
+        Static: usize,
+        Dynamic: void,
     };
 
     pub const CompileUsing = union(enum) {
@@ -80,13 +90,14 @@ pub const CompileOptions = struct {
 fn parse_opt (al: std.mem.Allocator, argv: [][*:0]const u8) ArgError!CompileOptions {
     var options = CompileOptions {
          // FIXME get default target at compile time
+        .alloc = .{.Dynamic = {}},
         .target = .linux_x86_64,
         .method = .{ .as = .{}},
         .eof_by = .noop,
     };
 
     var i: usize = 0;
-    //e.g: ziggerish hello.bf : ?target=linux_x86 ?mem_size=200 +verbose warning?=false : gcc +inlined -libc =temp_path?temp.c : hello
+    //e.g: ziggerish hello.bf : ?target=linux_x86 ?alloc=200 +verbose warning?=false : gcc +inlined -libc =temp_path?temp.c : hello
 
     // input file
     // TODO multi-source compile not supported, yet.
@@ -210,10 +221,16 @@ fn assign_struct_field (
             // it never frees allocated memory
             @field(options, field.name) = try al.dupeZ(u8,val);
         },
-        usize => {
+        CompileOptions.Alloc => {
             // FIXME what if negative given?
-            const ret: c_int = C.atoi(@ptrCast([*c]const u8, val));
-            @field(options, field.name) = @intCast(usize, ret);
+            const ret: c_long = C.strtol(@ptrCast([*c]const u8, val), null, 0);
+            //if (ret == 0 and C.errno == C.EINVAL) return error.UnknownValue;
+            // FIXME can't use C.errno. just assuming it is always valid. any better ways?
+            const TT = CompileOptions.Alloc;
+            @field(options, field.name) =
+                if (ret == 0) @unionInit(TT, "Dynamic", {})
+                else if (ret > 0) @unionInit(TT, "Static", @intCast(usize, ret))
+                else @unionInit(TT, "StaticUnchecked", @intCast(usize, -ret));
         },
         else => {
             switch (@typeInfo(field.field_type)) {
@@ -275,7 +292,7 @@ fn dump_options(options: CompileOptions) void {
     };
 
     dprint(" | {} {} {} ", .{
-        options.mem_size,
+        options.alloc,
         options.verbose,
         options.warning,
     });
