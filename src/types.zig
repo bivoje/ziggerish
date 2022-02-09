@@ -37,6 +37,9 @@ pub const BFinstr = enum {
 };
 
 pub const CompileOptions = struct {
+    // FIXME
+    // shouldn't we prevent setting src/dst_path as general options?
+    // as they are specified otherwise?
     src_path: [:0]const u8 = "-", // default to stdin
     dst_path: [:0]const u8 = "-", // default to stdout
 
