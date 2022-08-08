@@ -95,9 +95,7 @@ fn compile_cl (
 }
 
 test "argparse" {
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-    const allocator = arena.allocator();
+    const allocator = std.testing.allocator;
 
     // REPORT why in the hell can't i use const here?
     var argv = [_][*:0]const u8 {
@@ -154,10 +152,7 @@ const zero_integrated_tests = blk: {
 var integrated_tests: []const TestPair = &neg1_integrated_tests;
 
 test "integrated" {
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-
-    const allocator = arena.allocator();
+    const allocator = std.testing.allocator;
 
     dprint("\n", .{});
 
@@ -356,23 +351,23 @@ fn integrated_test_dumptest (comptime eof_by: CompileOptions.EofBy) type {
     fn ffff() !void {
     const out = switch (eof_by) {
         .noop =>
-            \\00 
-            \\61 62 63 
-            \\61 62 63 
-            \\cba61 
+            \\00
+            \\61 62 63
+            \\61 62 63
+            \\cba61
             \\
             ,
         .neg1 =>
-            \\00 
-            \\61 62 63 
-            \\61 FF 63 
+            \\00
+            \\61 62 63
+            \\61 FF 63
             \\
             ++"c\xffa61 \n"
             ,
         .zero =>
-            \\00 
-            \\61 62 63 
-            \\61 00 63 
+            \\00
+            \\61 62 63
+            \\61 00 63
             \\
             ++ "c\x00a61 \n"
     };
